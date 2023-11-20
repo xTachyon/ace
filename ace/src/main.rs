@@ -1,5 +1,6 @@
+mod tester;
+
 use anyhow::Result;
-use std::fs;
 
 enum R64 {
     RAX,
@@ -158,8 +159,10 @@ fn run(code: &[u8]) {
 }
 
 fn main() -> Result<()> {
-    let data = fs::read("binfile")?;
-    run(&data);
+    // let data = fs::read("binfile")?;
+    // run(&data);
+
+    tester::run()?;
 
     Ok(())
 }
