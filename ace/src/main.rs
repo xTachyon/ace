@@ -110,7 +110,7 @@ fn push_reg(regs: &mut [RegData; 16], stack: &mut [u8], register: R64) {
     stack[rsp - 8..rsp].copy_from_slice(&source.x);
 }
 
-fn run(code: &[u8]) {
+fn run(code: &[u8]) -> [RegData; 16] {
     let mut ip = 0;
     let mut registers = [RegData::ZERO; 16];
     let mut stack = [0u8; 1024 * 1024];
@@ -142,7 +142,7 @@ fn run(code: &[u8]) {
             }
             0xc3 => {
                 println!("ret");
-                todo!()
+                break;
             }
             0xf3 => {
                 if code[ip + 1..].starts_with(&[0x0f, 0x1e, 0xfa]) {
@@ -156,6 +156,8 @@ fn run(code: &[u8]) {
             _ => unimplemented!(),
         }
     }
+
+    registers
 }
 
 fn main() -> Result<()> {

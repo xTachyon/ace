@@ -47,48 +47,84 @@ unsafe fn map_x_memory() -> &'static mut [u8; 4096] {
     &mut *memory
 }
 
+#[derive(Default, Copy, Clone)]
+#[repr(C)]
 struct HwRegs {
-    rax: u64,
+    regs: [u64; 14]
+}
+macro_rules! r {
+    ($i:ident, $e:expr) => {
+        fn $i(&self) -> u64 {
+            self.regs[$e]
+        }
+    };
+}
+impl HwRegs {
+    r!(rax, 0);
+    r!(rbx, 1);
+    r!(rcx, 2);
+    r!(rdx, 3);
 }
 
-unsafe fn run_test(executable_memory: &[u8; 4096]) {
+// mov [r15], rax
+// mov [r15+8], rbx
+// mov [r15+16], rcx
+// mov [r15+24], rdx
+// mov [r15+32], rdi
+// mov [r15+40], rsi
+// mov [r15+48], r8
+// mov [r15+56], r9
+// mov [r15+64], r10
+// mov [r15+72], r11
+// mov [r15+80], r12
+// mov [r15+88], r13
+// mov [r15+96], r14
+
+unsafe extern "sysv64" fn run_test(executable_memory: &[u8; 4096]) -> HwRegs {
     let f: unsafe extern "C" fn() = transmute(executable_memory.as_ptr());
+    let mut regs = HwRegs::default();
 
     asm!(
-        "push rax",
-        "push rbx",
-        "push rcx",
-        "push rdx",
-        "push rdi",
-        "push rsi",
-        "push r8",
-        "push r9",
-        "push r10",
-        "push r11",
-        "push r12",
-        "push r13",
-        "push r14",
-        "push r15",
+        "
+        push rsp
+        push rbp
+        push rbx
+        push r12
+        push r13
+        push r14
+        push r15
+        
+        push {0}
+        call {1}
+        pop r15
+
+        mov [r15], rax
+        mov [r15+8], rbx
+        mov [r15+16], rcx
+        mov [r15+24], rdx
+        mov [r15+32], rdi
+        mov [r15+40], rsi
+        mov [r15+48], r8
+        mov [r15+56], r9
+        mov [r15+64], r10
+        mov [r15+72], r11
+        mov [r15+80], r12
+        mov [r15+88], r13
+        mov [r15+96], r14
+
+        pop r15
+        pop r14
+        pop r13
+        pop r12
+        pop rbx
+        pop rbp
+        pop rsp
+        ",
+        in(reg) &mut regs,
+        in(reg) f,
     );
 
-    f();
-
-    asm!(
-        "push r15",
-        "push r14",
-        "push r13",
-        "push r12",
-        "push r11",
-        "push r10",
-        "push r9",
-        "push r8",
-        "push rsi",
-        "push rdi",
-        "push rdx",
-        "push rcx",
-        "push rbx",
-        "push rax",
-    );
+    regs
 }
 
 fn run_one(s: &str, tmp: &mut Vec<u8>, executable_memory: &mut [u8; 4096]) -> Result<()> {
@@ -123,6 +159,12 @@ fn run_one(s: &str, tmp: &mut Vec<u8>, executable_memory: &mut [u8; 4096]) -> Re
 
     executable_memory[0..tmp.len()].copy_from_slice(tmp);
     executable_memory[tmp.len()..].fill(0xcc);
+
+    let regs = unsafe { run_test(&executable_memory) };
+
+    let soft = super::run(executable_memory);
+
+    assert_ne!(regs.rax(), soft)
 
     Ok(())
 }
