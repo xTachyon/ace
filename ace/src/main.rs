@@ -1,26 +1,24 @@
 mod tester;
 
 use anyhow::Result;
+use std::fmt::Debug;
 
-enum R64 {
-    RAX,
-    RBX,
-    RCX,
-    RDX,
-    RDI,
-    RSI,
-    RBP,
-    RSP,
-    R8,
-    R9,
-    R10,
-    R11,
-    R12,
-    R13,
-    R14,
-    R15,
+macro_rules! decl_reg_from_index {
+    ($name:ident, $($r:ident,)*) => {
+
+        impl $name {
+            fn from_index(x: u8) -> Self {
+                $(
+                    if x == ($r as u8) {
+                        return $r;
+                    }
+                )*
+                unreachable!("invalid register number");
+            }
+        }
+    };
+    (false, $($r:ident,)*) => {};
 }
-
 macro_rules! decl_reg {
     ($name:ident, $($r:ident,)*) => {
         #[derive(Debug, Copy, Clone)]
@@ -30,14 +28,6 @@ macro_rules! decl_reg {
             )*
         }
         impl $name {
-            fn from_index(x: u8) -> Self {
-                $(
-                    if x == ($r as u8) {
-                        return $r;
-                    }
-                )*
-                unreachable!()
-            }
             fn name(self) -> &'static str {
                 match self {
                     $(
@@ -51,32 +41,25 @@ macro_rules! decl_reg {
         }
     };
 }
-decl_reg!(R32, EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI,);
-impl R64 {
-    fn as_usize(self) -> usize {
-        self as usize
+decl_reg!(R64, RAX, RBX, RCX, RDX, RDI, RSI, RBP, RSP, R8, R9, R10, R11, R12, R13, R14, R15,);
+decl_reg_from_index!(
+    R64, RAX, RBX, RCX, RDX, RDI, RSI, RBP, RSP, R8, R9, R10, R11, R12, R13, R14, R15,
+);
+decl_reg!(R32, EAX, EBX, ECX, EDX, EDI, ESI, EBP, ESP,);
+impl R32 {
+    fn from_index(x: u8) -> R32 {
+        match x {
+            0 => EAX,
+            1 => ECX,
+            2 => EDX,
+            3 => EBX,
+            4 => ESP,
+            5 => EBP,
+            6 => ESI,
+            7 => EDI,
+            _ => unreachable!("invalid register number"),
+        }
     }
-    // fn from_index(x: u8) -> Self {
-    //     match x {
-    //         0 => RAX,
-    //         1 => RBX,
-    //         2 => RCX,
-    //         3 => RDX,
-    //         4 => RDI,
-    //         5 => RSI,
-    //         6 => RBP,
-    //         7 => RSP,
-    //         8 => R8,
-    //         9 => R9,
-    //         10 => R10,
-    //         11 => R11,
-    //         12 => R12,
-    //         13 => R13,
-    //         14 => R14,
-    //         15 => R15,
-    //         _ => unimplemented!(),
-    //     }
-    // }
 }
 
 use R32::*;
@@ -103,11 +86,56 @@ impl RegData {
         self.x = new.to_ne_bytes();
     }
 }
+impl Debug for RegData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegData").field("x", &self.r64()).finish()
+    }
+}
 
 fn push_reg(regs: &mut [RegData; 16], stack: &mut [u8], register: R64) {
     let rsp = regs[RSP.as_usize()].r64() as usize;
     let source = regs[register.as_usize()];
     stack[rsp - 8..rsp].copy_from_slice(&source.x);
+}
+
+#[derive(Clone, Copy, Default)]
+struct Rex(u8);
+impl Rex {
+    fn b(self) -> bool {
+        self.0 & 0b1 != 0
+    }
+    fn x(self) -> bool {
+        self.0 & 0b10 != 0
+    }
+    fn r(self) -> bool {
+        self.0 & 0b100 != 0
+    }
+    fn w(self) -> bool {
+        self.0 & 0b1000 != 0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ModRm(u8);
+impl ModRm {
+    fn mod_(self) -> u8 {
+        (self.0 >> 6) & 0b11
+    }
+    fn reg(self) -> u8 {
+        (self.0 >> 3) & 0b111
+    }
+    fn rm(self) -> u8 {
+        self.0 & 0b111
+    }
+}
+impl Debug for ModRm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModRm")
+            .field("mod", &self.mod_())
+            .field("ref", &self.reg())
+            .field("rm", &self.rm())
+            .finish()
+    }
 }
 
 fn run(code: &[u8]) -> [RegData; 16] {
@@ -117,6 +145,8 @@ fn run(code: &[u8]) -> [RegData; 16] {
 
     registers[RBP.as_usize()].set_r64(stack.len() as u64);
     registers[RSP.as_usize()].set_r64(stack.len() as u64);
+
+    let mut rex_prefix: Option<Rex> = None;
 
     loop {
         let opcode = code[ip];
@@ -140,9 +170,45 @@ fn run(code: &[u8]) -> [RegData; 16] {
 
                 ip += 2;
             }
+            0xb8..=0xbf => {
+                let reg = R32::from_index(opcode - 0xb8);
+                assert!(code.len() >= ip + 5);
+
+                let data =
+                    i32::from_le_bytes([code[ip + 1], code[ip + 2], code[ip + 3], code[ip + 4]]);
+
+                registers[reg.as_usize()].set_r32(data as u32);
+
+                println!("mov {}, {:#x}", reg.name(), data);
+
+                ip += 5;
+            }
             0xc3 => {
                 println!("ret");
                 break;
+            }
+            0xc7 => {
+                // mov
+                let modrm = ModRm(code[1]);
+                assert_eq!(modrm.mod_(), 0b11);
+
+                let rex = rex_prefix.unwrap_or_default();
+                if rex.w() {
+                    assert!(code.len() >= ip + 6);
+                    let data = [code[ip + 2], code[ip + 3], code[ip + 4], code[ip + 5]];
+                    let data = i32::from_le_bytes(data) as i64;
+
+                    let dst = R64::from_index(modrm.reg());
+                    registers[dst.as_usize()].set_r64(data as u64);
+
+                    ip += 6;
+
+                    println!("mov {}, {:#x}", dst.name(), data);
+                } else {
+                    todo!()
+                }
+
+                rex_prefix = None;
             }
             0xf3 => {
                 if code[ip + 1..].starts_with(&[0x0f, 0x1e, 0xfa]) {
@@ -150,10 +216,17 @@ fn run(code: &[u8]) -> [RegData; 16] {
                     println!("endbr64");
                     ip += 4;
                 } else {
-                    unimplemented!();
+                    todo!();
                 }
             }
-            _ => unimplemented!(),
+            _ => {
+                if opcode & 0b0100 << 4 != 0 {
+                    rex_prefix = Some(Rex(opcode));
+                    ip += 1;
+                } else {
+                    todo!("opcode={:#x}", opcode);
+                }
+            }
         }
     }
 
