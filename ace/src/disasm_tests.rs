@@ -69,7 +69,9 @@ fn sub() {
     let text = "
 mov ebx, 100
 sub ebx, 5
+cmp ebx, 5
 sub ebx, -10
+cmp ebx, -10
     ";
 
     t(text);

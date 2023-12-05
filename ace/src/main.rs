@@ -275,6 +275,8 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> Registers {
                 let rex = rex_prefix.unwrap_or_default();
                 let modrm = ModRm(code[ip + 1]);
 
+                let is_cmp = modrm.reg() == 7;
+
                 // let src = R8::from_index(modrm.reg());
 
                 let mod_ = modrm.mod_();
@@ -300,9 +302,14 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> Registers {
                             ]);
 
                             let value = registers[dst].r64() as i64 - imm as i64;
-                            registers[dst].set_r64(value as u64);
 
-                            w!(d, "sub {}, {}", dst, imm);
+                            if is_cmp {
+                                w!(d, "cmp {}, {}", dst, imm);
+                            } else {
+                                registers[dst].set_r64(value as u64);
+
+                                w!(d, "sub {}, {}", dst, imm);
+                            }
 
                             ip += 1 + 1 + 4;
                         } else {
@@ -316,9 +323,14 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> Registers {
                             ]);
 
                             let value = registers[dst].r32() as i32 - imm;
-                            registers[dst].set_r32(value as u32);
 
-                            w!(d, "sub {}, {}", dst, imm);
+                            if is_cmp {
+                                w!(d, "cmp {}, {}", dst, imm);
+                            } else {
+                                registers[dst].set_r32(value as u32);
+
+                                w!(d, "sub {}, {}", dst, imm);
+                            }
 
                             ip += 1 + 1 + 4;
                         }
