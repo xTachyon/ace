@@ -130,8 +130,8 @@ fn xor<R: Register, D: DisasmWriter>(
     registers: &mut [RegData; 16],
     d: &mut D,
 ) {
-    dbg!(modrm);
-    dbg!(rex);
+    // dbg!(modrm);
+    // dbg!(rex);
     let r1 = R::from_index(modrm.rm() + 8 * rex.b() as u8);
     let r2 = R::from_index(modrm.reg() + 8 * rex.r() as u8);
 
@@ -162,19 +162,15 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
             0x31 => {
                 // xor
 
+                let rex = rex_prefix.unwrap_or_default();
                 let modrm = ModRm(code[ip + 1]);
 
-                match rex_prefix {
-                    Some(rex) => {
-                        if rex.w() {
-                            xor::<R64, _>(modrm, rex, &mut registers, d);
-                        } else {
-                            xor::<R16, _>(modrm, rex, &mut registers, d);
-                        }
-                    }
-                    None => {
-                        xor::<R32, _>(modrm, Rex::default(), &mut registers, d);
-                    }
+                if is_16_bit {
+                    xor::<R16, _>(modrm, rex, &mut registers, d);
+                } else if rex.w() {
+                    xor::<R64, _>(modrm, rex, &mut registers, d);
+                } else {
+                    xor::<R32, _>(modrm, rex, &mut registers, d);
                 }
 
                 ip += 2;
@@ -306,7 +302,7 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
             _ => {
                 if opcode & 0b0100 << 4 != 0 {
                     rex_prefix = Some(Rex(opcode));
-                    dbg!(rex_prefix);
+                    // dbg!(rex_prefix);
                     ip += 1;
                 } else {
                     todo!("opcode={:#x}\n+++++++++++++++++++++++++++++++++++\n{}+++++++++++++++++++++++++++++++++++", opcode, d);

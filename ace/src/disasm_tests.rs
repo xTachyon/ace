@@ -33,7 +33,7 @@ fn t(text: &str) {
 
     super::run(&bin_correct, &mut output);
 
-    fs::write(ASM_FILE_PATH, output).unwrap();
+    fs::write(ASM_FILE_PATH, &output).unwrap();
 
     Command::new("nasm")
         .args([ASM_FILE_PATH, "-felf64", "-O0"])
@@ -48,7 +48,103 @@ fn t(text: &str) {
     let bin_new = fs::read(BIN_FILE_PATH).unwrap();
 
     let bin_correct = &bin_correct[..bin_correct.len() - 1];
-    assert_eq!(bin_correct, bin_new);
+    assert_eq!(bin_correct, bin_new, "\n{}", output);
+}
+
+#[test]
+fn xor_64() {
+    let text = "
+xor rax, rax
+xor rbx, rbx
+xor rcx, rcx
+xor rdx, rdx
+xor rsp, rsp
+xor rbp, rbp
+xor rdi, rdi
+xor rsi, rsi
+
+xor r8, r8
+xor r9, r9
+xor r10, r10
+xor r11, r11
+xor r12, r12
+xor r13, r13
+xor r14, r14
+xor r15, r15
+
+xor rax, rbx
+xor rbx, rcx
+xor rcx, rdx
+
+xor rax, r8
+xor r8, r9
+    ";
+
+    t(text);
+}
+
+#[test]
+fn xor_32() {
+    let text = "
+xor eax, eax
+xor ebx, ebx
+xor ecx, ecx
+xor edx, edx
+xor esp, esp
+xor ebp, ebp
+xor edi, edi
+xor esi, esi
+
+xor r8d, r8d
+xor r9d, r9d
+xor r10d, r10d
+xor r11d, r11d
+xor r12d, r12d
+xor r13d, r13d
+xor r14d, r14d
+xor r15d, r15d
+
+xor eax, ebx
+xor ebx, ecx
+xor ecx, edx
+
+xor eax, r8d
+xor r8d, r9d
+    ";
+
+    t(text);
+}
+
+#[test]
+fn xor_16() {
+    let text = "
+xor ax, ax
+xor bx, bx
+xor cx, cx
+xor dx, dx
+xor sp, sp
+xor bp, bp
+xor di, di
+xor si, si
+
+xor r8w, r8w
+xor r9w, r9w
+xor r10w, r10w
+xor r11w, r11w
+xor r12w, r12w
+xor r13w, r13w
+xor r14w, r14w
+xor r15w, r15w
+
+xor ax, bx
+xor bx, cx
+xor cx, dx
+
+xor ax, r8w
+xor r8w, r9w
+    ";
+
+    t(text);
 }
 
 #[test]
