@@ -15,3 +15,5 @@ Cargo.lock
 
 **/.vscode
 ace/working
+tmp/
+nohup.out
