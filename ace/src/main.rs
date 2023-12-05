@@ -155,6 +155,8 @@ fn xor<R: Register, D: DisasmWriter>(
 struct Eflags(u32);
 impl Eflags {}
 
+struct Registers {}
+
 fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
     let mut ip = 0usize;
     let mut registers = [RegData::ZERO; 16];

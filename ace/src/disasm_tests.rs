@@ -1,4 +1,4 @@
-use crate::DisasmWriter;
+use crate::{DisasmWriter, RegData};
 use std::fmt::Write;
 use std::{fmt::Arguments, fs, process::Command};
 
@@ -8,7 +8,7 @@ impl DisasmWriter for String {
     }
 }
 
-fn t(text: &str) {
+fn t(text: &str) -> [RegData; 16] {
     const ASM_FILE_PATH: &str = "tmp/now.s";
     const BIN_FILE_PATH: &str = "tmp/now.bin";
 
@@ -31,7 +31,7 @@ fn t(text: &str) {
     let bin_correct = fs::read(BIN_FILE_PATH).unwrap();
     let mut output = String::new();
 
-    super::run(&bin_correct, &mut output);
+    let r = super::run(&bin_correct, &mut output);
 
     fs::write(ASM_FILE_PATH, &output).unwrap();
 
@@ -49,7 +49,55 @@ fn t(text: &str) {
 
     let bin_correct = &bin_correct[..bin_correct.len() - 1];
     assert_eq!(bin_correct, bin_new, "\n{}", output);
+
+    r
 }
+
+// #[test]
+// fn call() {
+//     let text = "
+// f:
+//     push    rbp
+//     mov     rbp, rsp
+//     call    g
+//     pop     rbp
+//     ret
+// g:
+//     push    rbp
+//     mov     rbp, rsp
+//     mov     eax, -5
+//     pop     rbp
+//     ret
+//     ";
+
+//     t(text);
+// }
+
+// #[test]
+// fn stack_alloc() {
+//     let text = "
+// f:
+//     push    rbp
+//     mov     rbp, rsp
+//     sub     rsp, 920
+//     mov     DWORD [rbp-4], 0
+//     jmp     .L2
+// .L3:
+//     mov     eax, DWORD [rbp-4]
+//     mov     edx, eax
+//     mov     eax, DWORD[rbp-4]
+//     mov     BYTE [rbp-1040+rax], dl
+//     add     DWORD [rbp-4], 1
+// .L2:
+//     cmp     DWORD [rbp-4], 1023
+//     jbe     .L3
+//     nop
+//     leave
+//     ret
+//     ";
+
+//     t(text);
+// }
 
 #[test]
 fn pop_64() {
@@ -282,5 +330,6 @@ mov r14w, 15
 mov r15w, 16
     ";
 
-    t(text);
+    let regs = t(text);
+    
 }
