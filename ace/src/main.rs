@@ -3,22 +3,22 @@ mod tester;
 use anyhow::Result;
 use std::fmt::Debug;
 
-macro_rules! decl_reg_from_index {
-    ($name:ident, $($r:ident,)*) => {
+// macro_rules! decl_reg_from_index {
+//     ($name:ident, $($r:ident,)*) => {
 
-        impl $name {
-            fn from_index(x: u8) -> Self {
-                $(
-                    if x == ($r as u8) {
-                        return $r;
-                    }
-                )*
-                unreachable!("invalid register number");
-            }
-        }
-    };
-    (false, $($r:ident,)*) => {};
-}
+//         impl $name {
+//             fn from_index(x: u8) -> Self {
+//                 $(
+//                     if x == ($r as u8) {
+//                         return $r;
+//                     }
+//                 )*
+//                 unreachable!("invalid register number");
+//             }
+//         }
+//     };
+//     (false, $($r:ident,)*) => {};
+// }
 macro_rules! decl_reg {
     ($name:ident, $($r:ident,)*) => {
         #[derive(Debug, Copy, Clone)]
@@ -42,10 +42,35 @@ macro_rules! decl_reg {
     };
 }
 decl_reg!(R64, RAX, RBX, RCX, RDX, RDI, RSI, RBP, RSP, R8, R9, R10, R11, R12, R13, R14, R15,);
-decl_reg_from_index!(
-    R64, RAX, RBX, RCX, RDX, RDI, RSI, RBP, RSP, R8, R9, R10, R11, R12, R13, R14, R15,
-);
+// decl_reg_from_index!(
+//     R64, RAX, RBX, RCX, RDX, RDI, RSI, RBP, RSP, R8, R9, R10, R11, R12, R13, R14, R15,
+// );
 decl_reg!(R32, EAX, EBX, ECX, EDX, EDI, ESI, EBP, ESP,);
+impl R64 {
+    fn from_index(x: u8) -> R64 {
+        match x {
+            0 => RAX,
+            1 => RCX,
+            2 => RDX,
+            3 => RBX,
+            4 => RSP,
+            5 => RBP,
+            6 => RSI,
+            7 => RDI,
+            //
+            8 => R8,
+            9 => R9,
+            10 => R10,
+            11 => R11,
+            12 => R12,
+            13 => R13,
+            14 => R14,
+            15 => R15,
+            //
+            _ => unreachable!("invalid register number"),
+        }
+    }
+}
 impl R32 {
     fn from_index(x: u8) -> R32 {
         match x {
@@ -100,6 +125,7 @@ fn push_reg(regs: &mut [RegData; 16], stack: &mut [u8], register: R64) {
 
 #[derive(Clone, Copy, Default)]
 struct Rex(u8);
+#[allow(dead_code)]
 impl Rex {
     fn b(self) -> bool {
         self.0 & 0b1 != 0
@@ -112,6 +138,16 @@ impl Rex {
     }
     fn w(self) -> bool {
         self.0 & 0b1000 != 0
+    }
+}
+impl Debug for Rex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rex")
+            .field("b", &self.b())
+            .field("x", &self.x())
+            .field("r", &self.r())
+            .field("w", &self.w())
+            .finish()
     }
 }
 
@@ -132,7 +168,7 @@ impl Debug for ModRm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModRm")
             .field("mod", &self.mod_())
-            .field("ref", &self.reg())
+            .field("reg", &self.reg())
             .field("rm", &self.rm())
             .finish()
     }
@@ -151,6 +187,32 @@ fn run(code: &[u8]) -> [RegData; 16] {
     loop {
         let opcode = code[ip];
         match opcode {
+            0x31 => {
+                // xor
+
+                let modrm = ModRm(code[ip + 1]);
+                let rex = rex_prefix.unwrap_or_default();
+
+                if rex.w() {
+                    let r1 = R64::from_index(modrm.rm() + 8 * rex.b() as u8);
+                    let r2 = R64::from_index(modrm.reg() + 8 * rex.r() as u8);
+
+                    println!("xor {}, {}", r1.name(), r2.name());
+
+                    let v1 = registers[r1.as_usize()].r64();
+                    let v2 = registers[r2.as_usize()].r64();
+
+                    let result = v1 ^ v2;
+
+                    registers[r1.as_usize()].set_r64(result);
+
+                    ip += 2;
+                } else {
+                    todo!()
+                }
+
+                rex_prefix = None;
+            }
             0x55 => {
                 // push rbp
                 println!("push rbp");
@@ -171,17 +233,47 @@ fn run(code: &[u8]) -> [RegData; 16] {
                 ip += 2;
             }
             0xb8..=0xbf => {
-                let reg = R32::from_index(opcode - 0xb8);
-                assert!(code.len() >= ip + 5);
+                // mov
 
-                let data =
-                    i32::from_le_bytes([code[ip + 1], code[ip + 2], code[ip + 3], code[ip + 4]]);
+                let rex = rex_prefix.unwrap_or_default();
+                
+                let reg = R64::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
 
-                registers[reg.as_usize()].set_r32(data as u32);
+                if rex.w() {
+                    let data = i64::from_le_bytes([
+                        code[ip + 1],
+                        code[ip + 2],
+                        code[ip + 3],
+                        code[ip + 4],
+                        code[ip + 5],
+                        code[ip + 6],
+                        code[ip + 7],
+                        code[ip + 8],
+                    ]);
 
-                println!("mov {}, {:#x}", reg.name(), data);
+                    registers[reg.as_usize()].set_r64(data as u64);
 
-                ip += 5;
+                    println!("mov {}, {:#x}", reg.name(), data);
+
+                    ip += 1 + 8;
+                } else {
+                    assert!(code.len() >= ip + 5);
+
+                    let data = i32::from_le_bytes([
+                        code[ip + 1],
+                        code[ip + 2],
+                        code[ip + 3],
+                        code[ip + 4],
+                    ]);
+
+                    registers[reg.as_usize()].set_r32(data as u32);
+
+                    println!("mov {}, {:#x}", reg.name(), data);
+
+                    ip += 1 + 4;
+                }
+
+                rex_prefix = None;
             }
             0xc3 => {
                 println!("ret");

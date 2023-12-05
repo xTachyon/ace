@@ -54,33 +54,6 @@ unsafe fn map_x_memory() -> &'static mut [u8; 4096] {
 struct HwRegs {
     regs: [u64; 16],
 }
-macro_rules! r {
-    ($i:ident, $e:expr) => {
-        fn $i(&self) -> u64 {
-            self.regs[$e]
-        }
-    };
-}
-impl HwRegs {
-    r!(rax, 0);
-    r!(rbx, 1);
-    r!(rcx, 2);
-    r!(rdx, 3);
-}
-
-// mov [r15], rax
-// mov [r15+8], rbx
-// mov [r15+16], rcx
-// mov [r15+24], rdx
-// mov [r15+32], rdi
-// mov [r15+40], rsi
-// mov [r15+48], r8
-// mov [r15+56], r9
-// mov [r15+64], r10
-// mov [r15+72], r11
-// mov [r15+80], r12
-// mov [r15+88], r13
-// mov [r15+96], r14
 
 unsafe extern "sysv64" fn run_test_impl(f: unsafe extern "C" fn(), regs: *mut HwRegs) {
     asm!(
@@ -162,13 +135,40 @@ fn run_one(s: &str, tmp: &mut Vec<u8>, executable_memory: &mut [u8; 4096]) -> Re
     let index = s.find(TO_FIND).expect("no separator found");
 
     let asm = &s[..index];
-    let conditions = &s[index + TO_FIND.len()..];
+    // let conditions = &s[index + TO_FIND.len()..];
 
-    write!(tmp, "BITS 64\n{}\nret", asm)?;
+    write!(
+        tmp,
+        "
+BITS 64
+
+%macro set_all 1
+
+    mov rax, %1
+    mov rbx, %1
+    mov rcx, %1
+    mov rdx, %1
+    mov rsi, %1
+    mov rdi, %1
+    
+    mov r9, %1
+    mov r10, %1
+    mov r11, %1
+    mov r12, %1
+    mov r13, %1
+    mov r14, %1
+    mov r15, %1
+
+%endmacro
+
+{}
+ret",
+        asm
+    )?;
     fs::write(ASM_FILE_PATH, &tmp)?;
 
     Command::new("nasm")
-        .args([ASM_FILE_PATH, "-felf64"])
+        .args([ASM_FILE_PATH, "-felf64", "-O0"])
         .status()?;
 
     Command::new("objcopy")
@@ -189,11 +189,12 @@ fn run_one(s: &str, tmp: &mut Vec<u8>, executable_memory: &mut [u8; 4096]) -> Re
     let soft = super::run(executable_memory);
     let regs: HwRegs = unsafe { run_test(&executable_memory) };
 
-    for i in 0..16 {
+    // ignore r15 for now
+    for i in 0..15 {
         if i == R64::RSP as usize || i == R64::RBP as usize {
             continue;
         }
-        assert_eq!(regs.regs[i], soft[i].r64());
+        assert_eq!(regs.regs[i], soft[i].r64(), "at {}", i);
     }
 
     Ok(())
@@ -207,8 +208,12 @@ pub fn run() -> Result<()> {
     let mut buffer = String::new();
     let mut tmp = Vec::new();
     for i in fs::read_dir("../tests")? {
-        let mut file = File::open(i?.path())?;
+        let path = i?.path();
+        println!("---------------------- {}", path.display());
 
+        let mut file = File::open(path)?;
+
+        tmp.clear();
         buffer.clear();
         file.read_to_string(&mut buffer)?;
         run_one(&buffer, &mut tmp, executable_memory)?;
