@@ -1,4 +1,5 @@
-use crate::{DisasmWriter, RegData};
+use crate::registers::R64;
+use crate::{DisasmWriter, Registers};
 use std::fmt::Write;
 use std::{fmt::Arguments, fs, process::Command};
 
@@ -8,7 +9,7 @@ impl DisasmWriter for String {
     }
 }
 
-fn t(text: &str) -> [RegData; 16] {
+fn t(text: &str) -> Registers {
     const ASM_FILE_PATH: &str = "tmp/now.s";
     const BIN_FILE_PATH: &str = "tmp/now.bin";
 
@@ -53,25 +54,53 @@ fn t(text: &str) -> [RegData; 16] {
     r
 }
 
-// #[test]
-// fn call() {
-//     let text = "
-// f:
-//     push    rbp
-//     mov     rbp, rsp
-//     call    g
-//     pop     rbp
-//     ret
-// g:
-//     push    rbp
-//     mov     rbp, rsp
-//     mov     eax, -5
-//     pop     rbp
-//     ret
-//     ";
+#[test]
+fn sub_mem() {
+    let text = "
+mov     DWORD [rbp-4], 0
+mov     eax, DWORD [rbp-4]
+    ";
 
-//     t(text);
-// }
+    t(text);
+}
+
+#[test]
+fn sub() {
+    let text = "
+mov ebx, 100
+sub ebx, 5
+sub ebx, -10
+    ";
+
+    t(text);
+}
+
+#[test]
+fn stack_alloc_ret_1000() {
+    let text = "
+f:
+    push    rbp
+    mov     rbp, rsp
+    sub     rsp, 920
+    mov     DWORD [rbp-4], 0
+    jmp     .L2
+.L3:
+    mov     eax, DWORD [rbp-4]
+    mov     edx, eax
+    mov     eax, DWORD [rbp-4]
+    mov     BYTE [rbp-1040+rax], dl
+    add     DWORD [rbp-4], 1
+.L2:
+    cmp     DWORD [rbp-4], 1023
+    jbe     .L3
+    movzx   eax, BYTE [rbp-40]
+    movsx   eax, al
+    leave
+    ret
+    ";
+
+    t(text);
+}
 
 // #[test]
 // fn stack_alloc() {
@@ -331,5 +360,6 @@ mov r15w, 16
     ";
 
     let regs = t(text);
-    
+    assert_eq!(regs[R64::RAX].r64(), 1);
+    assert_eq!(regs[R64::R15].r64(), 16);
 }

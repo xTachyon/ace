@@ -16,7 +16,7 @@ use registers::R64::*;
 use registers::R8;
 
 #[repr(align(8))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct RegData {
     x: [u8; 8],
 }
@@ -54,9 +54,9 @@ impl Debug for RegData {
     }
 }
 
-fn push_reg(regs: &mut [RegData; 16], stack: &mut [u8], register: R64) {
-    let rsp = regs[RSP.as_usize()].r64() as usize;
-    let source = regs[register.as_usize()];
+fn push_reg(regs: &mut Registers, stack: &mut [u8], register: R64) {
+    let rsp = regs[RSP].r64() as usize;
+    let source = regs[register];
     stack[rsp - 8..rsp].copy_from_slice(&source.x);
 }
 
@@ -131,12 +131,7 @@ macro_rules! w {
     };
 }
 
-fn xor<R: Register, D: DisasmWriter>(
-    modrm: ModRm,
-    rex: Rex,
-    registers: &mut [RegData; 16],
-    d: &mut D,
-) {
+fn xor<R: Register, D: DisasmWriter>(modrm: ModRm, rex: Rex, registers: &mut Registers, d: &mut D) {
     // dbg!(modrm);
     // dbg!(rex);
     let r1 = R::from_index(modrm.rm() + 8 * rex.b() as u8);
@@ -144,32 +139,45 @@ fn xor<R: Register, D: DisasmWriter>(
 
     w!(d, "xor {}, {}", r1, r2);
 
-    let v1 = R::from_reg(registers[r1.as_usize()]);
-    let v2 = R::from_reg(registers[r2.as_usize()]);
+    let v1 = R::from_reg(registers[r1]);
+    let v2 = R::from_reg(registers[r2]);
 
     let result = v1 ^ v2;
 
-    registers[r1.as_usize()].set_r64(result.into());
+    registers[r1].set_r64(result.into());
 }
 
 struct Eflags(u32);
 impl Eflags {}
 
-struct Registers {}
+struct Registers([RegData; 16]);
 
-fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
+impl<T: Register> std::ops::Index<T> for Registers {
+    type Output = RegData;
+
+    fn index(&self, index: T) -> &Self::Output {
+        &self.0[index.as_usize()]
+    }
+}
+impl<T: Register> std::ops::IndexMut<T> for Registers {
+    fn index_mut(&mut self, index: T) -> &mut Self::Output {
+        &mut self.0[index.as_usize()]
+    }
+}
+
+fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> Registers {
     let mut ip = 0usize;
-    let mut registers = [RegData::ZERO; 16];
+    let mut registers = Registers([RegData::ZERO; 16]);
     let mut stack = [0u8; 1024 * 1024];
 
-    registers[RBP.as_usize()].set_r64(stack.len() as u64);
-    registers[RSP.as_usize()].set_r64(stack.len() as u64);
+    registers[RBP].set_r64(stack.len() as u64);
+    registers[RSP].set_r64(stack.len() as u64);
 
     let mut rex_prefix: Option<Rex> = None;
     let mut is_16_bit = false;
 
     loop {
-    let opcode = code[ip];
+        let opcode = code[ip];
         match opcode {
             0x0f => {
                 if code[ip + 1] == 0x84 {
@@ -216,7 +224,7 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
             0x58..=0x5f => {
                 // pop r64
                 // 58+ rd 	POP r64 	O 	Valid 	N.E. 	Pop top of stack into r64; increment stack pointer.
-                
+
                 let reg = R64::from_index(opcode - 0x58);
 
                 w!(d, "pop {}", reg);
@@ -247,7 +255,7 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
 
                 let mod_ = modrm.mod_();
                 match mod_ {
-                    0x01 => {
+                    0b01 => {
                         let disp = code[ip + 2] as i8;
                         let imm = code[ip + 3];
 
@@ -256,6 +264,66 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
                         ip += 4;
                     }
                     _ => todo!(),
+                }
+
+                rex_prefix = None;
+            }
+            0x81 => {
+                // sub r/m16/32/64, imm16/32
+                // 81 /5 iw 	SUB r/m16, imm16 	MI 	Valid 	Valid 	Subtract imm16 from r/m16.
+
+                let rex = rex_prefix.unwrap_or_default();
+                let modrm = ModRm(code[ip + 1]);
+
+                // let src = R8::from_index(modrm.reg());
+
+                let mod_ = modrm.mod_();
+                match mod_ {
+                    0b01 => {
+                        todo!()
+                        // let disp = code[ip + 2] as i8;
+                        // let imm = code[ip + 3];
+
+                        // w!(d, "sub {}, {}", dst, disp);
+
+                        // ip += 4;
+                    }
+                    0b11 => {
+                        if rex.w() {
+                            let dst = R64::from_index(modrm.rm());
+
+                            let imm = i32::from_le_bytes([
+                                code[ip + 2],
+                                code[ip + 3],
+                                code[ip + 4],
+                                code[ip + 5],
+                            ]);
+
+                            let value = registers[dst].r64() as i64 - imm as i64;
+                            registers[dst].set_r64(value as u64);
+
+                            w!(d, "sub {}, {}", dst, imm);
+
+                            ip += 1 + 1 + 4;
+                        } else {
+                            let dst = R32::from_index(modrm.rm());
+
+                            let imm = i32::from_le_bytes([
+                                code[ip + 2],
+                                code[ip + 3],
+                                code[ip + 4],
+                                code[ip + 5],
+                            ]);
+
+                            let value = registers[dst].r32() as i32 - imm;
+                            registers[dst].set_r32(value as u32);
+
+                            w!(d, "sub {}, {}", dst, imm);
+
+                            ip += 1 + 1 + 4;
+                        }
+                    }
+                    _ => todo!("{:?}", modrm),
                 }
 
                 rex_prefix = None;
@@ -273,9 +341,9 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
                 match mod_ {
                     0x01 => {
                         let disp = code[ip + 2] as i8;
-                        let addr = registers[dst.as_usize()].r64() as i64 + disp as i64;
+                        let addr = registers[dst].r64() as i64 + disp as i64;
 
-                        stack[addr as usize] = registers[src.as_usize()].r8();
+                        stack[addr as usize] = registers[src].r8();
 
                         w!(d, "mov [{}{:+}], {}", dst, disp, src);
 
@@ -302,7 +370,8 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
 
                     w!(d, "mov {}, {}", dst, src);
 
-                    registers[dst.as_usize()].set_r64(registers[src.as_usize()].r64());
+                    let value = registers[src].r64();
+                    registers[dst].set_r64(value);
                 } else {
                     assert_eq!(modrm.mod_(), 0b11);
 
@@ -311,12 +380,47 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
 
                     w!(d, "mov {}, {}", dst, src);
 
-                    registers[dst.as_usize()].set_r32(registers[src.as_usize()].r32());
+                    let value = registers[src].r32();
+                    registers[dst].set_r32(value);
                 }
 
                 ip += 2;
 
                 is_16_bit = false;
+                rex_prefix = None;
+            }
+            0x8b => {
+                // mov
+
+                let rex = rex_prefix.unwrap_or_default();
+                let modrm = ModRm(code[ip + 1]);
+
+                let mod_ = modrm.mod_();
+                match mod_ {
+                    0b01 => {
+                        if rex.w() {
+                            todo!()
+                        } else {
+                            let disp = code[ip + 2] as i8;
+
+                            let src = R64::from_index(modrm.rm());
+                            let dst = R32::from_index(modrm.reg());
+                            let mem_src = registers[src].r64() as i64 + disp as i64;
+                            let mem_src = mem_src as usize;
+
+                            let mut data = [0; 4];
+                            data.copy_from_slice(&stack[mem_src..mem_src + 4]);
+                            let data = i32::from_le_bytes(data);
+                            registers[dst].set_r32(data as u32);
+
+                            w!(d, "mov {}, [{}{:+}]", dst, src, disp);
+
+                            ip += 1 + 1 + 1;
+                        }
+                    }
+                    _ => todo!("{:?}", modrm),
+                }
+
                 rex_prefix = None;
             }
             0xb0..=0xb7 => {
@@ -325,7 +429,7 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
                 let reg = R8::from_index(opcode - 0xb0);
                 let data = code[ip + 1];
 
-                registers[reg.as_usize()].set_r8(data);
+                registers[reg].set_r8(data);
 
                 w!(d, "mov {}, {}", reg, data);
 
@@ -344,7 +448,7 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
 
                     let data = i16::from_le_bytes([code[ip + 1], code[ip + 2]]);
 
-                    registers[reg.as_usize()].set_r16(data as u16);
+                    registers[reg].set_r16(data as u16);
 
                     w!(d, "mov {}, {:#x}", reg, data);
 
@@ -365,7 +469,7 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
                         code[ip + 8],
                     ]);
 
-                    registers[reg.as_usize()].set_r64(data as u64);
+                    registers[reg].set_r64(data as u64);
 
                     w!(d, "mov {}, {:#x}", reg, data);
 
@@ -382,7 +486,7 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
                         code[ip + 4],
                     ]);
 
-                    registers[reg.as_usize()].set_r32(data as u32);
+                    registers[reg].set_r32(data as u32);
 
                     w!(d, "mov {}, {:#x}", reg, data);
 
@@ -398,23 +502,52 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
             }
             0xc7 => {
                 // mov
-                let modrm = ModRm(code[ip + 1]);
-                assert_eq!(modrm.mod_(), 0b11);
 
                 let rex = rex_prefix.unwrap_or_default();
-                if rex.w() {
-                    assert!(code.len() >= ip + 6);
-                    let data = [code[ip + 2], code[ip + 3], code[ip + 4], code[ip + 5]];
-                    let data = i32::from_le_bytes(data) as i64;
+                let modrm = ModRm(code[ip + 1]);
 
-                    let dst = R64::from_index(modrm.reg());
-                    registers[dst.as_usize()].set_r64(data as u64);
+                let mod_ = modrm.mod_();
+                match mod_ {
+                    0b01 => {
+                        if rex.w() {
+                            todo!()
+                        } else {
+                            let disp = code[ip + 2] as i8;
+                            let data = i32::from_le_bytes([
+                                code[ip + 3],
+                                code[ip + 4],
+                                code[ip + 5],
+                                code[ip + 6],
+                            ]);
 
-                    ip += 6;
+                            let dst = R64::from_index(modrm.rm());
+                            let mem_dst = registers[dst].r64() as i64 + disp as i64;
+                            let mem_dst = mem_dst as usize;
 
-                    w!(d, "mov {}, {:#x}", dst, data);
-                } else {
-                    todo!()
+                            stack[mem_dst..mem_dst + 4].copy_from_slice(&data.to_le_bytes());
+
+                            w!(d, "mov dword [{}{:+}], {}", dst, disp, data);
+
+                            ip += 1 + 1 + 1 + 4;
+                        }
+                    }
+                    0b11 => {
+                        if rex.w() {
+                            assert!(code.len() >= ip + 6);
+                            let data = [code[ip + 2], code[ip + 3], code[ip + 4], code[ip + 5]];
+                            let data = i32::from_le_bytes(data) as i64;
+
+                            let dst = R64::from_index(modrm.reg());
+                            registers[dst].set_r64(data as u64);
+
+                            ip += 6;
+
+                            w!(d, "mov {}, {:#x}", dst, data);
+                        } else {
+                            todo!()
+                        }
+                    }
+                    _ => todo!("{:?}", modrm),
                 }
 
                 rex_prefix = None;
