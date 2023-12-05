@@ -16,13 +16,11 @@ use registers::R64::*;
 use registers::R8;
 
 #[repr(align(8))]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 struct RegData {
     x: [u8; 8],
 }
 impl RegData {
-    const ZERO: RegData = RegData { x: [0; 8] };
-
     fn r8(self) -> u8 {
         self.x[0]
     }
@@ -147,27 +145,50 @@ fn xor<R: Register, D: DisasmWriter>(modrm: ModRm, rex: Rex, registers: &mut Reg
     registers[r1].set_r64(result.into());
 }
 
-struct Eflags(u32);
-impl Eflags {}
+#[derive(Default)]
+struct Flags {
+    // cf: bool,
+    // pf: bool,
+    zf: bool,
+    sf: bool,
+    // of: bool,
+}
+impl Flags {}
 
-struct Registers([RegData; 16]);
+macro_rules! calc_flags {
+    ($r:expr, $e1:expr, $e2:expr) => {
+        let e1 = $e1 as i64;
+        let e2 = $e2 as i64;
+
+        $r.flags = Flags {
+            zf: e1 == e2,
+            sf: e1 > e2,
+        };
+    };
+}
+
+#[derive(Default)]
+struct Registers {
+    general: [RegData; 16],
+    flags: Flags,
+}
 
 impl<T: Register> std::ops::Index<T> for Registers {
     type Output = RegData;
 
     fn index(&self, index: T) -> &Self::Output {
-        &self.0[index.as_usize()]
+        &self.general[index.as_usize()]
     }
 }
 impl<T: Register> std::ops::IndexMut<T> for Registers {
     fn index_mut(&mut self, index: T) -> &mut Self::Output {
-        &mut self.0[index.as_usize()]
+        &mut self.general[index.as_usize()]
     }
 }
 
 fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> Registers {
     let mut ip = 0usize;
-    let mut registers = Registers([RegData::ZERO; 16]);
+    let mut registers = Registers::default();
     let mut stack = [0u8; 1024 * 1024];
 
     registers[RBP].set_r64(stack.len() as u64);
@@ -180,23 +201,25 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> Registers {
         let opcode = code[ip];
         match opcode {
             0x0f => {
-                if code[ip + 1] == 0x84 {
-                    // je/jz rel32
-                    // 0F 84 cd 	JE rel32 	D 	Valid 	Valid 	Jump near if equal (ZF=1).
+                // je/jz rel32
+                // 0F 84 cd 	JE rel32 	D 	Valid 	Valid 	Jump near if equal (ZF=1).
 
-                    let rel32 = i32::from_le_bytes([
-                        code[ip + 2],
-                        code[ip + 3],
-                        code[ip + 4],
-                        code[ip + 5],
-                    ]);
+                let rel32 =
+                    i32::from_le_bytes([code[ip + 2], code[ip + 3], code[ip + 4], code[ip + 5]]);
 
-                    w!(d, "je near {}", rel32 + 4);
+                let (result, s) = match code[ip + 1] {
+                    0x84 => (registers.flags.zf, "je"),
+                    0x85 => (!registers.flags.zf, "jne"),
+                    _ => todo!(),
+                };
 
-                    ip += 1 + 1 + 4;
+                if result {
+                    ip += rel32 as usize + 1 + 1 + 4;
                 } else {
-                    todo!()
+                    ip += 1 + 1 + 4;
                 }
+
+                w!(d, "{s} near {}", rel32 + 4);
             }
             0x31 => {
                 // xor
@@ -259,8 +282,9 @@ fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> Registers {
                         let disp = code[ip + 2] as i8;
                         let imm = code[ip + 3];
 
-                        w!(d, "cmp byte [{}{:+}], {}", dst, disp, imm);
+                        calc_flags!(registers, 5, 6);
 
+                        w!(d, "cmp byte [{}{:+}], {}", dst, disp, imm);
                         ip += 4;
                     }
                     _ => todo!(),

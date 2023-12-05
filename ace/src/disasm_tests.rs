@@ -147,7 +147,7 @@ fn simple_jump() {
     mov     eax, edi
     mov     BYTE [rbp-4], al
     cmp     BYTE [rbp-4], 0
-    je near .L2
+    jne near .L2
     mov     eax, 5
     jmp near .L3
 .L2:

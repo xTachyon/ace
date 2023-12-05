@@ -194,7 +194,7 @@ ret",
         if i == R64::RSP as usize || i == R64::RBP as usize {
             continue;
         }
-        assert_eq!(regs.regs[i], soft.0[i].r64(), "at {}", i);
+        assert_eq!(regs.regs[i], soft.general[i].r64(), "at {}", i);
     }
 
     Ok(())
