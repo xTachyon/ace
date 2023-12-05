@@ -12,7 +12,6 @@ use std::{
     io::Read,
     process::Command,
 };
-
 use crate::R64;
 
 unsafe fn map_x_memory() -> &'static mut [u8; 4096] {
@@ -88,15 +87,16 @@ unsafe extern "sysv64" fn run_test_impl(f: unsafe extern "C" fn(), regs: *mut Hw
         pop r15
 
         mov [r15], rax
-        mov [r15+8], rbx
-        mov [r15+16], rcx
-        mov [r15+24], rdx
-        mov [r15+32], rdi
-        mov [r15+40], rsi
+        mov [r15+8], rcx
+        mov [r15+16], rdx
+        mov [r15+24], rbx
         
-        mov dword ptr [r15+48], 0
-        mov dword ptr [r15+56], 0
-
+        mov dword ptr [r15+32], 0
+        mov dword ptr [r15+40], 0
+        
+        mov [r15+48], rsi
+        mov [r15+56], rdi
+        
         mov [r15+64], r8
         mov [r15+72], r9
         mov [r15+80], r10
