@@ -35,6 +35,31 @@ pub enum R64 {
     R15,
 }
 
+// impl R64 {
+//     pub fn from_index_consecutive(x: u8) -> R64 {
+//         match x {
+//             0 => RAX,
+//             1 => RBX,
+//             2 => RCX,
+//             3 => RDX,
+//             4 => RDI,
+//             5 => RSI,
+//             6 => RBP,
+//             7 => RSP,
+//             //
+//             8 => R8,
+//             9 => R9,
+//             10 => R10,
+//             11 => R11,
+//             12 => R12,
+//             13 => R13,
+//             14 => R14,
+//             15 => R15,
+//             //
+//             _ => unreachable!("invalid register number"),
+//         }
+//     }
+// }
 impl Register for R64 {
     type BaseType = u64;
 
@@ -69,9 +94,9 @@ impl Register for R64 {
     fn name(self) -> &'static str {
         match self {
             RAX => "rax",
-            RCX => "rbc",
-            RDX => "rcx",
-            RBX => "rdx",
+            RCX => "rcx",
+            RDX => "rdx",
+            RBX => "rbx",
             RSP => "rsp",
             RBP => "rbp",
             RSI => "rsi",

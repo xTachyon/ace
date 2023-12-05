@@ -1,8 +1,11 @@
+#[cfg(test)]
+mod disasm_tests;
 mod registers;
 mod tester;
 
 use anyhow::Result;
 use std::fmt::Debug;
+use std::fmt::Display;
 // use registers::R16::*;
 // use registers::R32::*;
 use registers::Register;
@@ -101,11 +104,38 @@ impl Debug for ModRm {
     }
 }
 
-fn xor<R: Register>(modrm: ModRm, rex: Rex, registers: &mut [RegData; 16]) {
+trait DisasmWriter: Display {
+    fn write(&mut self, args: std::fmt::Arguments<'_>);
+}
+
+struct Nothing;
+impl Display for Nothing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Nothing")
+    }
+}
+impl DisasmWriter for Nothing {
+    fn write(&mut self, _args: std::fmt::Arguments<'_>) {}
+}
+
+macro_rules! w {
+    ($dst:expr, $($arg:tt)*) => {
+        $dst.write(std::format_args!($($arg)*))
+    };
+}
+
+fn xor<R: Register, D: DisasmWriter>(
+    modrm: ModRm,
+    rex: Rex,
+    registers: &mut [RegData; 16],
+    d: &mut D,
+) {
+    dbg!(modrm);
+    dbg!(rex);
     let r1 = R::from_index(modrm.rm() + 8 * rex.b() as u8);
     let r2 = R::from_index(modrm.reg() + 8 * rex.r() as u8);
 
-    println!("xor {}, {}", r1.name(), r2.name());
+    w!(d, "xor {}, {}", r1.name(), r2.name());
 
     let v1 = R::from_reg(registers[r1.as_usize()]);
     let v2 = R::from_reg(registers[r2.as_usize()]);
@@ -115,7 +145,7 @@ fn xor<R: Register>(modrm: ModRm, rex: Rex, registers: &mut [RegData; 16]) {
     registers[r1.as_usize()].set_r64(result.into());
 }
 
-fn run(code: &[u8]) -> [RegData; 16] {
+fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> [RegData; 16] {
     let mut ip = 0;
     let mut registers = [RegData::ZERO; 16];
     let mut stack = [0u8; 1024 * 1024];
@@ -124,6 +154,7 @@ fn run(code: &[u8]) -> [RegData; 16] {
     registers[RSP.as_usize()].set_r64(stack.len() as u64);
 
     let mut rex_prefix: Option<Rex> = None;
+    let mut is_16_bit = false;
 
     loop {
         let opcode = code[ip];
@@ -133,23 +164,30 @@ fn run(code: &[u8]) -> [RegData; 16] {
 
                 let modrm = ModRm(code[ip + 1]);
 
-                if let Some(rex) = rex_prefix {
-                    if rex.w() {
-                        xor::<R64>(modrm, rex, &mut registers);
-                    } else {
-                        xor::<R16>(modrm, rex, &mut registers);
+                match rex_prefix {
+                    Some(rex) => {
+                        if rex.w() {
+                            xor::<R64, _>(modrm, rex, &mut registers, d);
+                        } else {
+                            xor::<R16, _>(modrm, rex, &mut registers, d);
+                        }
                     }
-                } else {
-                    xor::<R32>(modrm, Rex::default(), &mut registers);
+                    None => {
+                        xor::<R32, _>(modrm, Rex::default(), &mut registers, d);
+                    }
                 }
-                
+
                 ip += 2;
                 rex_prefix = None;
             }
             0x55 => {
                 // push rbp
-                println!("push rbp");
+                w!(d, "push rbp");
                 push_reg(&mut registers, &mut stack, RBP);
+                ip += 1;
+            }
+            0x66 => {
+                is_16_bit = true;
                 ip += 1;
             }
             0x89 => {
@@ -159,20 +197,34 @@ fn run(code: &[u8]) -> [RegData; 16] {
                 let address = (info >> 6) & 0b11;
                 assert_eq!(address, 0b11);
 
-                println!("mov {}, {}", dst.name(), src.name());
+                w!(d, "mov {}, {}", dst.name(), src.name());
 
                 registers[dst.as_usize()].set_r32(registers[src.as_usize()].r32());
 
                 ip += 2;
             }
             0xb8..=0xbf => {
-                // mov
+                // mov r, imm
 
                 let rex = rex_prefix.unwrap_or_default();
 
-                let reg = R64::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
+                if is_16_bit {
+                    assert!(code.len() >= ip + 2);
 
-                if rex.w() {
+                    let reg = R16::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
+
+                    let data = i16::from_le_bytes([code[ip + 1], code[ip + 2]]);
+
+                    registers[reg.as_usize()].set_r16(data as u16);
+
+                    w!(d, "mov {}, {:#x}", reg.name(), data);
+
+                    ip += 1 + 2;
+                } else if rex.w() {
+                    assert!(code.len() >= ip + 8);
+
+                    let reg = R64::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
+
                     let data = i64::from_le_bytes([
                         code[ip + 1],
                         code[ip + 2],
@@ -186,11 +238,13 @@ fn run(code: &[u8]) -> [RegData; 16] {
 
                     registers[reg.as_usize()].set_r64(data as u64);
 
-                    println!("mov {}, {:#x}", reg.name(), data);
+                    w!(d, "mov {}, {:#x}", reg.name(), data);
 
                     ip += 1 + 8;
                 } else {
                     assert!(code.len() >= ip + 5);
+
+                    let reg = R32::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
 
                     let data = i32::from_le_bytes([
                         code[ip + 1],
@@ -201,15 +255,16 @@ fn run(code: &[u8]) -> [RegData; 16] {
 
                     registers[reg.as_usize()].set_r32(data as u32);
 
-                    println!("mov {}, {:#x}", reg.name(), data);
+                    w!(d, "mov {}, {:#x}", reg.name(), data);
 
                     ip += 1 + 4;
                 }
 
+                is_16_bit = false;
                 rex_prefix = None;
             }
             0xc3 => {
-                println!("ret");
+                w!(d, "ret");
                 break;
             }
             0xc7 => {
@@ -228,7 +283,7 @@ fn run(code: &[u8]) -> [RegData; 16] {
 
                     ip += 6;
 
-                    println!("mov {}, {:#x}", dst.name(), data);
+                    w!(d, "mov {}, {:#x}", dst.name(), data);
                 } else {
                     todo!()
                 }
@@ -238,18 +293,23 @@ fn run(code: &[u8]) -> [RegData; 16] {
             0xf3 => {
                 if code[ip + 1..].starts_with(&[0x0f, 0x1e, 0xfa]) {
                     // endbr64
-                    println!("endbr64");
+                    w!(d, "endbr64");
                     ip += 4;
                 } else {
                     todo!();
                 }
             }
+            0xf4 => {
+                // hlt, we use it for testing as it can never appear in userspace code
+                break;
+            }
             _ => {
                 if opcode & 0b0100 << 4 != 0 {
                     rex_prefix = Some(Rex(opcode));
+                    dbg!(rex_prefix);
                     ip += 1;
                 } else {
-                    todo!("opcode={:#x}", opcode);
+                    todo!("opcode={:#x}\n+++++++++++++++++++++++++++++++++++\n{}+++++++++++++++++++++++++++++++++++", opcode, d);
                 }
             }
         }

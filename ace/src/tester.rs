@@ -12,7 +12,7 @@ use std::{
     io::Read,
     process::Command,
 };
-use crate::R64;
+use crate::{R64, Nothing};
 
 unsafe fn map_x_memory() -> &'static mut [u8; 4096] {
     let page_size = 4096;
@@ -186,7 +186,7 @@ ret",
     executable_memory[0..tmp.len()].copy_from_slice(tmp);
     executable_memory[tmp.len()..].fill(0xcc);
 
-    let soft = super::run(executable_memory);
+    let soft = super::run(executable_memory, &mut Nothing);
     let regs: HwRegs = unsafe { run_test(&executable_memory) };
 
     // ignore r15 for now
