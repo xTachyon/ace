@@ -1,13 +1,12 @@
-use std::ops::BitXor;
+use std::{fmt::Display, ops::BitXor};
 
 use crate::RegData;
 
-pub trait Register: Copy {
+pub trait Register: Copy + Display {
     type BaseType: BitXor<Output = Self::BaseType> + Into<u64>;
 
     fn from_index(x: u8) -> Self;
     fn as_usize(self) -> usize;
-    fn name(self) -> &'static str;
     fn from_reg(x: RegData) -> Self::BaseType;
 }
 
@@ -35,31 +34,6 @@ pub enum R64 {
     R15,
 }
 
-// impl R64 {
-//     pub fn from_index_consecutive(x: u8) -> R64 {
-//         match x {
-//             0 => RAX,
-//             1 => RBX,
-//             2 => RCX,
-//             3 => RDX,
-//             4 => RDI,
-//             5 => RSI,
-//             6 => RBP,
-//             7 => RSP,
-//             //
-//             8 => R8,
-//             9 => R9,
-//             10 => R10,
-//             11 => R11,
-//             12 => R12,
-//             13 => R13,
-//             14 => R14,
-//             15 => R15,
-//             //
-//             _ => unreachable!("invalid register number"),
-//         }
-//     }
-// }
 impl Register for R64 {
     type BaseType = u64;
 
@@ -91,8 +65,13 @@ impl Register for R64 {
         self as usize
     }
 
-    fn name(self) -> &'static str {
-        match self {
+    fn from_reg(x: RegData) -> Self::BaseType {
+        x.r64()
+    }
+}
+impl Display for R64 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
             RAX => "rax",
             RCX => "rcx",
             RDX => "rdx",
@@ -109,11 +88,8 @@ impl Register for R64 {
             R13 => "r13",
             R14 => "r14",
             R15 => "r15",
-        }
-    }
-
-    fn from_reg(x: RegData) -> Self::BaseType {
-        x.r64()
+        };
+        f.write_str(s)
     }
 }
 
@@ -168,8 +144,14 @@ impl Register for R32 {
         self as usize
     }
 
-    fn name(self) -> &'static str {
-        match self {
+    fn from_reg(x: RegData) -> Self::BaseType {
+        x.r32()
+    }
+}
+
+impl Display for R32 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
             EAX => "eax",
             EBX => "ebx",
             ECX => "ecx",
@@ -186,11 +168,8 @@ impl Register for R32 {
             R13D => "r13d",
             R14D => "r14d",
             R15D => "r15d",
-        }
-    }
-
-    fn from_reg(x: RegData) -> Self::BaseType {
-        x.r32()
+        };
+        f.write_str(s)
     }
 }
 
@@ -245,8 +224,14 @@ impl Register for R16 {
         self as usize
     }
 
-    fn name(self) -> &'static str {
-        match self {
+    fn from_reg(x: RegData) -> Self::BaseType {
+        x.r16()
+    }
+}
+
+impl Display for R16 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
             AX => "ax",
             BX => "bx",
             CX => "cx",
@@ -263,10 +248,97 @@ impl Register for R16 {
             R13W => "r13w",
             R14W => "r14w",
             R15W => "r15w",
+        };
+        f.write_str(s)
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum R8 {
+    AL,
+    CL,
+    DL,
+    BL,
+    AH,
+    CH,
+    DH,
+    BH,
+    BPL,
+    SPL,
+    DIL,
+    SIL,
+    R8B,
+    R9B,
+    R10B,
+    R11B,
+    R12B,
+    R13B,
+    R14B,
+    R15B,
+}
+impl Register for R8 {
+    type BaseType = u8;
+
+    fn from_index(x: u8) -> Self {
+        match x {
+            0 => R8::AL,
+            1 => R8::CL,
+            2 => R8::DL,
+            3 => R8::BL,
+            4 => R8::AH,
+            5 => R8::CH,
+            6 => R8::DH,
+            7 => R8::BH,
+            8 => R8::BPL,
+            9 => R8::SPL,
+            10 => R8::DIL,
+            11 => R8::SIL,
+            12 => R8::R8B,
+            13 => R8::R9B,
+            14 => R8::R10B,
+            15 => R8::R11B,
+            16 => R8::R12B,
+            17 => R8::R13B,
+            18 => R8::R14B,
+            19 => R8::R15B,
+            //
+            _ => unreachable!("invalid register number"),
         }
     }
 
+    fn as_usize(self) -> usize {
+        self as usize
+    }
+
     fn from_reg(x: RegData) -> Self::BaseType {
-        x.r16()
+        x.r8()
+    }
+}
+
+impl Display for R8 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            R8::AL => "al",
+            R8::CL => "cl",
+            R8::DL => "dl",
+            R8::BL => "bl",
+            R8::AH => "ah",
+            R8::CH => "ch",
+            R8::DH => "dh",
+            R8::BH => "bh",
+            R8::BPL => "bpl",
+            R8::SPL => "spl",
+            R8::DIL => "dil",
+            R8::SIL => "sil",
+            R8::R8B => "r8b",
+            R8::R9B => "r9b",
+            R8::R10B => "r10b",
+            R8::R11B => "r11b",
+            R8::R12B => "r12b",
+            R8::R13B => "r13b",
+            R8::R14B => "r14b",
+            R8::R15B => "r15b",
+        };
+        f.write_str(s)
     }
 }

@@ -14,7 +14,7 @@ fn t(text: &str) {
 
     let text_new = text.to_string() + "\nhlt\n";
 
-    fs::remove_dir_all("tmp").unwrap();
+    let _ = fs::remove_dir_all("tmp");
     fs::create_dir("tmp").unwrap();
     fs::write("tmp/now.s", text_new).unwrap();
 
@@ -49,6 +49,72 @@ fn t(text: &str) {
 
     let bin_correct = &bin_correct[..bin_correct.len() - 1];
     assert_eq!(bin_correct, bin_new, "\n{}", output);
+}
+
+#[test]
+fn pop_64() {
+    let text = "
+pop rbp
+    ";
+
+    t(text);
+}
+
+#[test]
+fn simple_jump() {
+    let text = "
+    push    rbp
+    mov     rbp, rsp
+    mov     eax, edi
+    mov     BYTE [rbp-4], al
+    cmp     BYTE [rbp-4], 0
+    je near .L2
+    mov     eax, 5
+    jmp near .L3
+.L2:
+    mov     eax, 10
+.L3:
+    pop     rbp
+    ret
+    ";
+
+    t(text);
+}
+
+#[test]
+fn simple_jump2() {
+    let text = "
+f:
+    push    rbp
+    mov     rbp, rsp
+    mov     edx, edi
+    mov     eax, esi
+    mov     BYTE [rbp-4], dl
+    mov     BYTE [rbp-8], al
+    cmp     BYTE [rbp-4], 0
+    je near .L2
+    cmp     BYTE [rbp-8], 0
+    je near .L2
+    mov     eax, 5
+    jmp near .L3
+.L2:
+    mov     eax, 10
+.L3:
+    pop     rbp
+    ret
+    ";
+
+    t(text);
+}
+
+#[test]
+fn mov_m() {
+    let text = "
+mov bl, 5
+mov [rbp-4], bl
+    ";
+
+    t(text);
 }
 
 #[test]
