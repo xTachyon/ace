@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod disasm_tests;
+mod gdb;
 mod registers;
+mod new_tester;
 mod tester;
 
 use anyhow::Result;
@@ -631,7 +633,11 @@ fn main() -> Result<()> {
     // let data = fs::read("binfile")?;
     // run(&data);
 
-    tester::run()?;
+    if false {
+        tester::run()?;
+    }
+
+    new_tester::run();
 
     Ok(())
 }

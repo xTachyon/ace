@@ -1,0 +1,2 @@
+setting e registers zeroes upper bits in r registers
+how 16bit instructions work
