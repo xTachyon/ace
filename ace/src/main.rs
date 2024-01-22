@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod disasm_tests;
 mod gdb;
-mod registers;
 mod new_tester;
+mod registers;
 mod tester;
 
 use anyhow::Result;
@@ -146,6 +146,11 @@ fn xor<R: Register, D: DisasmWriter>(modrm: ModRm, rex: Rex, registers: &mut Reg
 
     registers[r1].set_r64(result.into());
 }
+
+// #[inline(always)]
+// fn MOV<T: Sized + Copy>(src: &T, dst: &mut T) {
+//     *dst = *src;
+// }
 
 #[derive(Default)]
 struct Flags {

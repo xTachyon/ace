@@ -1,20 +1,27 @@
+use crate::{Nothing, R64};
 use anyhow::Result;
-use libc::{
-    mmap, MAP_ANONYMOUS, MAP_FAILED, MAP_FIXED, MAP_PRIVATE, PROT_EXEC, PROT_NONE, PROT_READ,
-    PROT_WRITE,
-};
 use std::arch::asm;
 use std::io::Write;
 use std::mem::transmute;
-use std::ptr::null_mut;
 use std::{
     fs::{self, File},
     io::Read,
     process::Command,
 };
-use crate::{R64, Nothing};
 
+#[cfg(target_family = "windows")]
 unsafe fn map_x_memory() -> &'static mut [u8; 4096] {
+    todo!()
+}
+
+#[cfg(target_family = "unix")]
+unsafe fn map_x_memory() -> &'static mut [u8; 4096] {
+    use libc::{
+        mmap, MAP_ANONYMOUS, MAP_FAILED, MAP_FIXED, MAP_PRIVATE, PROT_EXEC, PROT_NONE, PROT_READ,
+        PROT_WRITE,
+    };
+    use std::ptr::null_mut;
+
     let page_size = 4096;
     let region_size = 4 * page_size;
 
