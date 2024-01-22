@@ -117,6 +117,7 @@ fn lex(input_str: &str) -> Vec<Tok> {
     tokens
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(PartialEq, Debug, Clone, Copy)]
 enum Tok<'x> {
     EOF,
@@ -204,14 +205,15 @@ fn parse_list<'x>(parser: &mut Parser<'x>) -> Value<'x> {
         }
 
         // this should probably be parse_impl that should recognize what kind of token it is, but this is enough for now.. maybe
-        let peek = peek!(parser);
-        let value = match peek {
-            STRING(s) => {
-                next!(parser);
-                Value::String(s)
-            }
-            _ => unreachable!("{:?}", peek),
-        };
+        // let peek = peek!(parser);
+        // let value = match peek {
+        //     STRING(s) => {
+        //         next!(parser);
+        //         Value::String(s)
+        //     }
+        //     _ => unreachable!("{:?}", peek),
+        // };
+        let value = parse_impl(parser);
 
         result.push(value);
 
@@ -263,7 +265,15 @@ fn parse_map<'x>(parser: &mut Parser<'x>, needs_braces: bool) -> Value<'x> {
     Value::Map(result)
 }
 fn parse_impl<'x>(parser: &mut Parser<'x>) -> Value<'x> {
-    parse_map(parser, false)
+    let value = peek!(parser);
+    match value {
+        LCURLY => parse_map(parser, true),
+        STRING(s) => {
+            next!(parser);
+            Value::String(s)
+        }
+        _ => unreachable!("{:?}", value),
+    }
 }
 pub fn parse(input: &str) -> Value {
     let tokens = lex(input);
@@ -271,7 +281,7 @@ pub fn parse(input: &str) -> Value {
         input: tokens,
         offset: 0,
     };
-    parse_impl(&mut parser)
+    parse_map(&mut parser, false)
 }
 
 #[cfg(test)]

@@ -39,6 +39,19 @@ fn process_register_names(names: RegisterNames) -> [R64; 16] {
     regs
 }
 
+fn map_registers(mapping: &[R64; 16], regs: Vec<(u8, u64)>) -> [u64; 16] {
+    let mut result = [0; 16];
+    for (number, value) in regs {
+        let number = number as usize;
+        if number >= mapping.len() {
+            continue;
+        }
+        let index = mapping[number];
+        result[index as usize] = value;
+    }
+    result
+}
+
 fn run_one(path: &str, s: &str, tmp: &mut Vec<u8>) -> Result<()> {
     const TO_FIND: &str =
         "-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-";
@@ -93,13 +106,13 @@ fn run_one(path: &str, s: &str, tmp: &mut Vec<u8>) -> Result<()> {
 
     loop {
         while let Some(message) = gdb.recv() {
-            match message {
-                Message::BreakpointHit | Message::EndSteppingRange => {
-                    gdb.step();
-                }
-                _ => {}
+            if let Message::BreakpointHit | Message::EndSteppingRange = message {
+                break;
             }
         }
+        let registers = gdb.registers();
+        let registers = map_registers(&register_table, registers);
+        gdb.step();
     }
 
     todo!();

@@ -72,6 +72,7 @@ impl GDB {
     pub fn breakpoint(&mut self, file: &str, line: u32) {
         w!(self, "b {}:{}", file, line);
     }
+
     pub fn breakpoint_fn(&mut self, fun: &str) {
         w!(self, "b {}", fun);
     }
@@ -84,10 +85,21 @@ impl GDB {
         w!(self, "r");
     }
 
+    pub fn registers(&mut self) -> Vec<(u8, u64)> {
+        w!(self, "-data-list-register-values x");
+
+        let message = self.recv_sync_message();
+
+        let Message::RegisterValues(values) = message else {
+            todo!("{:?}", message)
+        };
+
+        values
+    }
+
     pub fn register_names(&mut self) -> RegisterNames {
         w!(self, "-data-list-register-names");
         // sync op, so hopefully it will be the next thing?
-        // return RegisterNames { names: Vec::new() };
         let message = self.recv_sync_message();
 
         match message {
@@ -147,15 +159,41 @@ impl GDB {
 
         let value = gdbson::parse(rest);
         let value = value.as_map();
-        let value = &value["register-names"];
-        let value = value.as_list();
 
-        let registers = value
-            .into_iter()
-            .map(|x| x.as_string().to_string())
-            .collect();
+        // TODO: this should be already known when calling a sync function, but for now this works
+        if let Some(value) = value.get("register-names") {
+            let value = value.as_list();
 
-        Message::RegisterNames(registers)
+            let registers = value
+                .into_iter()
+                .map(|x| x.as_string().to_string())
+                .collect();
+
+            return Message::RegisterNames(registers);
+        }
+        if let Some(value) = value.get("register-values") {
+            let value = value.as_list();
+
+            let mut vec = Vec::with_capacity(value.len());
+            for i in value {
+                let i = i.as_map();
+
+                let value = i["value"].as_string();
+                let Some(value) = value.strip_prefix("0x") else {
+                    continue;
+                };
+
+                let value = u64::from_str_radix(value, 16).unwrap();
+
+                let number = i["number"].as_string();
+                let number = number.parse().unwrap();
+
+                vec.push((number, value));
+            }
+
+            return Message::RegisterValues(vec);
+        }
+        todo!()
     }
 
     fn recv_deserialize(&mut self, wait: bool) -> Option<(Message, MessageKind)> {
@@ -255,6 +293,7 @@ pub enum Message {
     BreakpointHit,
     EndSteppingRange,
     RegisterNames(Vec<String>),
+    RegisterValues(Vec<(u8, u64)>),
     Other,
 }
 
