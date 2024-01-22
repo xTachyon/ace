@@ -34,6 +34,30 @@ pub enum R64 {
     R15,
 }
 
+impl R64 {
+    pub fn from_name(x: &str) -> R64 {
+        match x {
+            "rax" => RAX,
+            "rbx" => RBX,
+            "rcx" => RCX,
+            "rdx" => RDX,
+            "rsp" => RSP,
+            "rbp" => RBP,
+            "rsi" => RSI,
+            "rdi" => RDI,
+            "r8" => R8,
+            "r9" => R9,
+            "r10" => R10,
+            "r11" => R11,
+            "r12" => R12,
+            "r13" => R13,
+            "r14" => R14,
+            "r15" => R15,
+            _ => unreachable!("unknown register name {x}"),
+        }
+    }
+}
+
 impl Register for R64 {
     type BaseType = u64;
 

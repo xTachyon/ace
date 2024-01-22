@@ -1,6 +1,7 @@
 mod gdbson;
 
 use std::{
+    collections::VecDeque,
     fmt::{Arguments, Display, Write as FmtWrite},
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
@@ -26,10 +27,22 @@ macro_rules! w {
     };
 }
 
+#[derive(PartialEq, Eq)]
+enum MessageKind {
+    Sync,
+    Async,
+}
+
+struct MessageInfo {
+    message: Message,
+    kind: MessageKind,
+}
+
 pub struct GDB {
     writer: BufWriter<ChildStdin>,
     log: BufWriter<File>,
     receiver: Receiver<String>,
+    queue: VecDeque<MessageInfo>,
 }
 
 impl GDB {
@@ -50,6 +63,7 @@ impl GDB {
             writer: BufWriter::new(writer),
             log: BufWriter::new(File::create("gdb_log.txt").unwrap()),
             receiver,
+            queue: VecDeque::new(),
         };
 
         gdb
@@ -57,6 +71,13 @@ impl GDB {
 
     pub fn breakpoint(&mut self, file: &str, line: u32) {
         w!(self, "b {}:{}", file, line);
+    }
+    pub fn breakpoint_fn(&mut self, fun: &str) {
+        w!(self, "b {}", fun);
+    }
+
+    pub fn step(&mut self) {
+        w!(self, "s");
     }
 
     pub fn run(&mut self) {
@@ -66,10 +87,11 @@ impl GDB {
     pub fn register_names(&mut self) -> RegisterNames {
         w!(self, "-data-list-register-names");
         // sync op, so hopefully it will be the next thing?
-        let message = self.recv().unwrap();
+        // return RegisterNames { names: Vec::new() };
+        let message = self.recv_sync_message();
 
         match message {
-            Message::RegisterNames(names) => RegisterNames { names },
+            Message::RegisterNames(names) => RegisterNames { inner: names },
             _ => todo!("{:?}", message),
         }
     }
@@ -102,6 +124,7 @@ impl GDB {
 
                 match reason {
                     "breakpoint-hit" => Message::BreakpointHit,
+                    "end-stepping-range" => Message::EndSteppingRange,
                     _ => todo!(),
                 }
             }
@@ -109,15 +132,17 @@ impl GDB {
         }
     }
 
-    fn sync_operation(&mut self, line: &str) -> Option<Message> {
-        let comma = line.find(',').unwrap();
-        let command = &line[..comma];
-        let rest = &line[comma + 1..];
+    fn sync_operation(&mut self, line: &str) -> Message {
+        let (command, rest) = split_comma(line);
 
         match command {
-            "done" => {}
-            "running" | "error" => return None,
+            "done" | "running" => {}
+            "error" => return Message::Other,
             _ => unreachable!(),
+        }
+
+        if rest.is_empty() {
+            return Message::Other;
         }
 
         let value = gdbson::parse(rest);
@@ -130,11 +155,11 @@ impl GDB {
             .map(|x| x.as_string().to_string())
             .collect();
 
-        Some(Message::RegisterNames(registers))
+        Message::RegisterNames(registers)
     }
 
-    fn recv_impl(&mut self, wait: bool) -> Option<Message> {
-        loop {
+    fn recv_deserialize(&mut self, wait: bool) -> Option<(Message, MessageKind)> {
+        let result = loop {
             let all = if wait {
                 self.receiver.recv().ok()
             } else {
@@ -151,26 +176,34 @@ impl GDB {
             }
 
             match all.as_bytes()[0] {
+                b'^' => {
+                    break (self.sync_operation(line), MessageKind::Sync);
+                }
+                b'=' => {
+                    break (self.notify_async_output(line), MessageKind::Async);
+                }
+                b'*' => {
+                    break (self.exec_async_output(line), MessageKind::Async);
+                }
                 b'~' => {
                     assert!(matches!(line.as_bytes(), [b'\"', .., b'\"']), "{}", line);
                     let line = &line[1..line.len() - 1];
                     print!("{}", unescape_c(line));
                 }
-                b'=' => {
-                    return Some(self.notify_async_output(line));
-                }
-                b'^' => {
-                    return self.sync_operation(line);
-                }
-                b'*' => {
-                    return Some(self.exec_async_output(line));
-                }
                 b'&' => {
                     self.write_log("log", format_args!("{}", unescape_c(line)));
                 }
                 _ => todo!("{}", all),
-            }
+            };
+        };
+        Some(result)
+    }
+
+    fn recv_impl(&mut self, wait: bool) -> Option<Message> {
+        if let Some(first) = self.queue.pop_front() {
+            return Some(first.message);
         }
+        Some(self.recv_deserialize(wait)?.0)
     }
 
     pub fn recv_async(&mut self) -> Option<Message> {
@@ -179,6 +212,22 @@ impl GDB {
 
     pub fn recv(&mut self) -> Option<Message> {
         self.recv_impl(true)
+    }
+
+    fn recv_sync_message(&mut self) -> Message {
+        if let Some(index) = self.queue.iter().position(|x| x.kind == MessageKind::Sync) {
+            let msg = self.queue.remove(index).expect("message must exist");
+            return msg.message;
+        }
+
+        loop {
+            let (msg, kind) = self.recv_deserialize(true).unwrap();
+            if kind == MessageKind::Sync {
+                return msg;
+            }
+
+            self.queue.push_back(MessageInfo { message: msg, kind });
+        }
     }
 
     fn write_to_gdb(&mut self, d: &str, args: Arguments) {
@@ -193,16 +242,24 @@ impl GDB {
     }
 }
 
+fn split_comma(line: &str) -> (&str, &str) {
+    match line.find(',') {
+        Some(comma) => (&line[..comma], &line[comma + 1..]),
+        None => (line, ""),
+    }
+}
+
 #[derive(Debug)]
 pub enum Message {
     BreakpointCreated,
     BreakpointHit,
+    EndSteppingRange,
     RegisterNames(Vec<String>),
     Other,
 }
 
 pub struct RegisterNames {
-    names: Vec<String>,
+    pub inner: Vec<String>,
 }
 
 pub trait Debuggable {

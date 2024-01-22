@@ -157,7 +157,7 @@ struct Flags {
     // cf: bool,
     // pf: bool,
     zf: bool,
-    sf: bool,
+    // sf: bool,
     // of: bool,
 }
 impl Flags {}
@@ -169,7 +169,7 @@ macro_rules! calc_flags {
 
         $r.flags = Flags {
             zf: e1 == e2,
-            sf: e1 > e2,
+            // sf: e1 > e2,
         };
     };
 }

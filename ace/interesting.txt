@@ -1,2 +1,6 @@
 setting e registers zeroes upper bits in r registers
 how 16bit instructions work
+instructiuni gen xor rax, rax sunt useless
+intre sub si cmp e un bit diferenta
+manualul zice un singur rex, dar pot fi mai multe
+nu toate instructiunile au range de 64 => sub

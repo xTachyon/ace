@@ -1,4 +1,6 @@
+use crate::gdb::RegisterNames;
 use crate::gdb::{Debuggable, Message, GDB};
+use crate::registers::R64;
 use anyhow::anyhow;
 use anyhow::Result;
 use std::{
@@ -25,6 +27,16 @@ impl ProcSpawnOk for Command {
 #[repr(C)]
 struct HwRegs {
     regs: [u64; 16],
+}
+
+fn process_register_names(names: RegisterNames) -> [R64; 16] {
+    let mut regs = [R64::R15; 16];
+
+    for (index, reg) in names.inner.into_iter().enumerate().take(16) {
+        regs[index] = R64::from_name(&reg);
+    }
+
+    regs
 }
 
 fn run_one(path: &str, s: &str, tmp: &mut Vec<u8>) -> Result<()> {
@@ -67,40 +79,28 @@ fn run_one(path: &str, s: &str, tmp: &mut Vec<u8>) -> Result<()> {
     while let Some(_) = gdb.recv_async() {}
 
     let register_names = gdb.register_names();
+    let register_table = process_register_names(register_names);
 
-    let expected_breakpoints = 0;
-    for (line, text) in asm.lines().enumerate() {
-        if text.is_empty() {
-            continue;
-        }
-        gdb.breakpoint("tmp/now.s", line as u32 + 1);
-    }
+    // for (line, text) in asm.lines().enumerate() {
+    //     if text.is_empty() {
+    //         continue;
+    //     }
+    //     gdb.breakpoint("tmp/now.s", line as u32 + 1);
+    // }
+    gdb.breakpoint_fn("_start");
 
     gdb.run();
 
-    let mut confirmed_breakpoints = 0;
-    while let Some(message) = gdb.recv() {
-        match message {
-            Message::BreakpointCreated => {
-                confirmed_breakpoints += 1;
-                if confirmed_breakpoints == expected_breakpoints {
-                    break;
+    loop {
+        while let Some(message) = gdb.recv() {
+            match message {
+                Message::BreakpointHit | Message::EndSteppingRange => {
+                    gdb.step();
                 }
+                _ => {}
             }
-            Message::BreakpointHit => {}
-            _ => {}
         }
     }
-
-    assert_eq!(confirmed_breakpoints, expected_breakpoints);
-
-    // ignore r15 for now
-    // for i in 0..15 {
-    //     if i == R64::RSP as usize || i == R64::RBP as usize {
-    //         continue;
-    //     }
-    //     assert_eq!(regs.regs[i], soft.general[i].r64(), "at {}", i);
-    // }
 
     todo!();
     Ok(())

@@ -195,7 +195,7 @@ fn parse_list<'x>(parser: &mut Parser<'x>) -> Value<'x> {
     expect!(parser, LSQUARE);
 
     let mut first = true;
-    while parser.offset < parser.len() {
+    while parser.offset < parser.len() && peek!(parser) != Tok::RSQUARE {
         if !first {
             if peek!(parser) != Tok::COMMA {
                 break;
@@ -204,12 +204,13 @@ fn parse_list<'x>(parser: &mut Parser<'x>) -> Value<'x> {
         }
 
         // this should probably be parse_impl that should recognize what kind of token it is, but this is enough for now.. maybe
-        let value = match peek!(parser) {
+        let peek = peek!(parser);
+        let value = match peek {
             STRING(s) => {
                 next!(parser);
                 Value::String(s)
             }
-            _ => unreachable!(),
+            _ => unreachable!("{:?}", peek),
         };
 
         result.push(value);
