@@ -53,7 +53,7 @@ impl Debug for RegData {
     }
 }
 
-fn push_reg(regs: &mut Registers, stack: &mut [u8], register: R64) {
+fn push_reg(regs: &Registers, stack: &mut [u8], register: R64) {
     let rsp = regs[RSP].r64() as usize;
     let source = regs[register];
     stack[rsp - 8..rsp].copy_from_slice(&source.x);
@@ -203,7 +203,7 @@ struct Emulator<'x, D: DisasmWriter> {
     d: D,
 }
 impl<'x, D: DisasmWriter> Emulator<'x, D> {
-    fn new<'a>(code: &'a [u8], d: D) -> Emulator<'a, D> {
+    fn new(code: &[u8], d: D) -> Emulator<'_, D> {
         Emulator {
             regs: Registers::default(),
             stack: [0; 1024 * 1024],

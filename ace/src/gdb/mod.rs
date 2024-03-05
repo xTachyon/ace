@@ -17,7 +17,7 @@ fn reader_thread(reader: ChildStdout, sender: Sender<String>) {
         s.clear();
         reader.read_line(&mut s).unwrap();
 
-        if let Err(_) = sender.send(s.trim().to_string()) {
+        if sender.send(s.trim().to_string()).is_err() {
             // debugging done
             return;
         }
@@ -41,15 +41,15 @@ struct MessageInfo {
     kind: MessageKind,
 }
 
-pub struct GDB {
+pub struct Gdb {
     writer: BufWriter<ChildStdin>,
     log: BufWriter<File>,
     receiver: Receiver<String>,
     queue: VecDeque<MessageInfo>,
 }
 
-impl GDB {
-    pub fn new(program: &str) -> GDB {
+impl Gdb {
+    pub fn new(program: &str) -> Gdb {
         let child = Command::new("gdb")
             .args([program, "--interpreter", "mi"])
             .stdin(Stdio::piped())
@@ -62,14 +62,12 @@ impl GDB {
         let (sender, receiver) = channel();
         std::thread::spawn(|| reader_thread(reader, sender));
 
-        let gdb = GDB {
+        Gdb {
             writer: BufWriter::new(writer),
             log: BufWriter::new(File::create("gdb_log.txt").unwrap()),
             receiver,
             queue: VecDeque::new(),
-        };
-
-        gdb
+        }
     }
 
     pub fn breakpoint(&mut self, file: &str, line: u32) {
@@ -169,7 +167,7 @@ impl GDB {
             let value = value.as_list();
 
             let registers = value
-                .into_iter()
+                .iter()
                 .map(|x| x.as_string().to_string())
                 .collect();
 
@@ -308,7 +306,7 @@ pub struct RegisterNames {
 }
 
 pub trait Debuggable {
-    fn init(&mut self, gdb: &mut GDB);
+    fn init(&mut self, gdb: &mut Gdb);
 }
 
 fn unescape_c(input: &str) -> UnescapeC {

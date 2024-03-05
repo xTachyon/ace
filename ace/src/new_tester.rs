@@ -1,5 +1,5 @@
 use crate::gdb::RegisterNames;
-use crate::gdb::{Debuggable, Message, GDB};
+use crate::gdb::{Debuggable, Message, Gdb};
 use crate::registers::{Register, R64};
 use crate::{Emulator, Nothing};
 use anyhow::anyhow;
@@ -64,7 +64,7 @@ fn run_one(s: &str, tmp: &mut Vec<u8>) -> Result<()> {
     let asm = &s[..index];
     // let conditions = &s[index + TO_FIND.len()..];
 
-    fs::write(ASM_FILE_PATH, &asm)?;
+    fs::write(ASM_FILE_PATH, asm)?;
 
     Command::new("nasm")
         .args([ASM_FILE_PATH, "-felf64", "-O0", "-g"])
@@ -88,9 +88,9 @@ fn run_one(s: &str, tmp: &mut Vec<u8>) -> Result<()> {
 
     // let soft = super::run(&tmp, &mut Nothing);
 
-    let mut gdb = GDB::new("tmp/now");
+    let mut gdb = Gdb::new("tmp/now");
 
-    while let Some(_) = gdb.recv_async() {}
+    while gdb.recv_async().is_some() {}
 
     let register_names = gdb.register_names();
     let register_table = process_register_names(register_names);
@@ -136,11 +136,10 @@ fn run_one(s: &str, tmp: &mut Vec<u8>) -> Result<()> {
 
         emulator.run();
 
-        for i in 0..16 {
+        for (i, &hw_value) in registers.iter().enumerate() {
             if i == 4 || i == 5 {
                 continue;
             }
-            let hw_value = registers[i];
             let soft_value = emulator.regs.general[i].r64();
 
             assert_eq!(
@@ -158,7 +157,7 @@ fn run_one(s: &str, tmp: &mut Vec<u8>) -> Result<()> {
 
 struct NewTester {}
 impl Debuggable for NewTester {
-    fn init(&mut self, gdb: &mut GDB) {
+    fn init(&mut self, gdb: &mut Gdb) {
         gdb.breakpoint("main.cpp", 5);
     }
 }
