@@ -193,445 +193,471 @@ impl<T: Register> std::ops::IndexMut<T> for Registers {
     }
 }
 
-fn run<D: DisasmWriter>(code: &[u8], d: &mut D) -> Registers {
-    let mut ip = 0usize;
-    let mut registers = Registers::default();
-    let mut stack = [0u8; 1024 * 1024];
+struct Emulator<'x> {
+    regs: Registers,
+    stack: [u8; 1024 * 1024],
+    ip: usize,
+    code: &'x [u8],
+    rex_prefix: Option<Rex>,
+    is_16_bit: bool,
+}
+impl<'x> Emulator<'x> {
+    fn new(code: &[u8]) -> Emulator {
+        Emulator {
+            regs: Registers::default(),
+            stack: [0; 1024 * 1024],
+            ip: 0,
+            code,
+            rex_prefix: None,
+            is_16_bit: false,
+        }
+    }
+
+    fn run<D: DisasmWriter>(&mut self, d: &mut D) {
+        crate::run(self, d)
+    }
+}
+
+fn run<D: DisasmWriter>(emulator: &mut Emulator, d: &mut D) {
+    let ip = &mut emulator.ip;
+    let registers = &mut emulator.regs;
+    let stack = &mut emulator.stack;
 
     registers[RBP].set_r64(stack.len() as u64);
     registers[RSP].set_r64(stack.len() as u64);
 
-    let mut rex_prefix: Option<Rex> = None;
-    let mut is_16_bit = false;
+    let rex_prefix = &mut emulator.rex_prefix;
+    let is_16_bit = &mut emulator.is_16_bit;
 
-    loop {
-        let opcode = code[ip];
-        match opcode {
-            0x0f => {
-                // je/jz rel32
-                // 0F 84 cd 	JE rel32 	D 	Valid 	Valid 	Jump near if equal (ZF=1).
+    let code = emulator.code;
+    let opcode = code[*ip];
+    match opcode {
+        0x0f => {
+            // je/jz rel32
+            // 0F 84 cd 	JE rel32 	D 	Valid 	Valid 	Jump near if equal (ZF=1).
 
-                let rel32 =
-                    i32::from_le_bytes([code[ip + 2], code[ip + 3], code[ip + 4], code[ip + 5]]);
+            let rel32 =
+                i32::from_le_bytes([code[*ip + 2], code[*ip + 3], code[*ip + 4], code[*ip + 5]]);
 
-                let (result, s) = match code[ip + 1] {
-                    0x84 => (registers.flags.zf, "je"),
-                    0x85 => (!registers.flags.zf, "jne"),
-                    _ => todo!(),
-                };
+            let (result, s) = match code[*ip + 1] {
+                0x84 => (registers.flags.zf, "je"),
+                0x85 => (!registers.flags.zf, "jne"),
+                _ => todo!(),
+            };
 
-                if result {
-                    ip += rel32 as usize + 1 + 1 + 4;
-                } else {
-                    ip += 1 + 1 + 4;
+            if result {
+                *ip += rel32 as usize + 1 + 1 + 4;
+            } else {
+                *ip += 1 + 1 + 4;
+            }
+
+            w!(d, "{s} near {}", rel32 + 4);
+        }
+        0x31 => {
+            // xor
+
+            let rex = rex_prefix.unwrap_or_default();
+            let modrm = ModRm(code[*ip + 1]);
+
+            if *is_16_bit {
+                xor::<R16, _>(modrm, rex, registers, d);
+            } else if rex.w() {
+                xor::<R64, _>(modrm, rex, registers, d);
+            } else {
+                xor::<R32, _>(modrm, rex, registers, d);
+            }
+
+            *ip += 2;
+            *rex_prefix = None;
+        }
+        0x55 => {
+            // push rbp
+            w!(d, "push rbp");
+            push_reg(registers, stack, RBP);
+            *ip += 1;
+        }
+        0x58..=0x5f => {
+            // pop r64
+            // 58+ rd 	POP r64 	O 	Valid 	N.E. 	Pop top of stack into r64; increment stack pointer.
+
+            let reg = R64::from_index(opcode - 0x58);
+
+            w!(d, "pop {}", reg);
+
+            *ip += 1;
+        }
+        0x66 => {
+            *is_16_bit = true;
+            *ip += 1;
+
+            run(emulator, d)
+        }
+        0x74 => {
+            // je/jz rel8
+            //  74 cb 	JE rel8 	D 	Valid 	Valid 	Jump short if equal (ZF=1).
+
+            let rel8 = code[1] as i8;
+
+            w!(d, "je {}", rel8);
+
+            *ip += 2;
+        }
+        0x80 => {
+            // cmp r/m8, imm8
+
+            let modrm = ModRm(code[*ip + 1]);
+
+            let dst = R64::from_index(modrm.rm());
+            // let src = R8::from_index(modrm.reg());
+
+            let mod_ = modrm.mod_();
+            match mod_ {
+                0b01 => {
+                    let disp = code[*ip + 2] as i8;
+                    let imm = code[*ip + 3];
+
+                    calc_flags!(registers, 5, 6);
+
+                    w!(d, "cmp byte [{}{:+}], {}", dst, disp, imm);
+                    *ip += 4;
                 }
-
-                w!(d, "{s} near {}", rel32 + 4);
+                _ => todo!(),
             }
-            0x31 => {
-                // xor
 
-                let rex = rex_prefix.unwrap_or_default();
-                let modrm = ModRm(code[ip + 1]);
+            *rex_prefix = None;
+        }
+        0x81 => {
+            // sub r/m16/32/64, imm16/32
+            // 81 /5 iw 	SUB r/m16, imm16 	MI 	Valid 	Valid 	Subtract imm16 from r/m16.
 
-                if is_16_bit {
-                    xor::<R16, _>(modrm, rex, &mut registers, d);
-                } else if rex.w() {
-                    xor::<R64, _>(modrm, rex, &mut registers, d);
-                } else {
-                    xor::<R32, _>(modrm, rex, &mut registers, d);
-                }
+            let rex = rex_prefix.unwrap_or_default();
+            let modrm = ModRm(code[*ip + 1]);
 
-                ip += 2;
-                rex_prefix = None;
-            }
-            0x55 => {
-                // push rbp
-                w!(d, "push rbp");
-                push_reg(&mut registers, &mut stack, RBP);
-                ip += 1;
-            }
-            0x58..=0x5f => {
-                // pop r64
-                // 58+ rd 	POP r64 	O 	Valid 	N.E. 	Pop top of stack into r64; increment stack pointer.
+            let is_cmp = modrm.reg() == 7;
 
-                let reg = R64::from_index(opcode - 0x58);
+            // let src = R8::from_index(modrm.reg());
 
-                w!(d, "pop {}", reg);
-
-                ip += 1;
-            }
-            0x66 => {
-                is_16_bit = true;
-                ip += 1;
-            }
-            0x74 => {
-                // je/jz rel8
-                //  74 cb 	JE rel8 	D 	Valid 	Valid 	Jump short if equal (ZF=1).
-
-                let rel8 = code[1] as i8;
-
-                w!(d, "je {}", rel8);
-
-                ip += 2;
-            }
-            0x80 => {
-                // cmp r/m8, imm8
-
-                let modrm = ModRm(code[ip + 1]);
-
-                let dst = R64::from_index(modrm.rm());
-                // let src = R8::from_index(modrm.reg());
-
-                let mod_ = modrm.mod_();
-                match mod_ {
-                    0b01 => {
-                        let disp = code[ip + 2] as i8;
-                        let imm = code[ip + 3];
-
-                        calc_flags!(registers, 5, 6);
-
-                        w!(d, "cmp byte [{}{:+}], {}", dst, disp, imm);
-                        ip += 4;
-                    }
-                    _ => todo!(),
-                }
-
-                rex_prefix = None;
-            }
-            0x81 => {
-                // sub r/m16/32/64, imm16/32
-                // 81 /5 iw 	SUB r/m16, imm16 	MI 	Valid 	Valid 	Subtract imm16 from r/m16.
-
-                let rex = rex_prefix.unwrap_or_default();
-                let modrm = ModRm(code[ip + 1]);
-
-                let is_cmp = modrm.reg() == 7;
-
-                // let src = R8::from_index(modrm.reg());
-
-                let mod_ = modrm.mod_();
-                match mod_ {
-                    0b01 => {
-                        todo!()
-                        // let disp = code[ip + 2] as i8;
-                        // let imm = code[ip + 3];
-
-                        // w!(d, "sub {}, {}", dst, disp);
-
-                        // ip += 4;
-                    }
-                    0b11 => {
-                        if rex.w() {
-                            let dst = R64::from_index(modrm.rm());
-
-                            let imm = i32::from_le_bytes([
-                                code[ip + 2],
-                                code[ip + 3],
-                                code[ip + 4],
-                                code[ip + 5],
-                            ]);
-
-                            let value = registers[dst].r64() as i64 - imm as i64;
-
-                            if is_cmp {
-                                w!(d, "cmp {}, {}", dst, imm);
-                            } else {
-                                registers[dst].set_r64(value as u64);
-
-                                w!(d, "sub {}, {}", dst, imm);
-                            }
-
-                            ip += 1 + 1 + 4;
-                        } else {
-                            let dst = R32::from_index(modrm.rm());
-
-                            let imm = i32::from_le_bytes([
-                                code[ip + 2],
-                                code[ip + 3],
-                                code[ip + 4],
-                                code[ip + 5],
-                            ]);
-
-                            let value = registers[dst].r32() as i32 - imm;
-
-                            if is_cmp {
-                                w!(d, "cmp {}, {}", dst, imm);
-                            } else {
-                                registers[dst].set_r32(value as u32);
-
-                                w!(d, "sub {}, {}", dst, imm);
-                            }
-
-                            ip += 1 + 1 + 4;
-                        }
-                    }
-                    _ => todo!("{:?}", modrm),
-                }
-
-                rex_prefix = None;
-            }
-            0x88 => {
-                // mov r/m8, r8
-
-                // let rex = rex_prefix.unwrap_or_default();
-                let modrm = ModRm(code[ip + 1]);
-
-                let dst = R64::from_index(modrm.rm());
-                let src = R8::from_index(modrm.reg());
-
-                let mod_ = modrm.mod_();
-                match mod_ {
-                    0x01 => {
-                        let disp = code[ip + 2] as i8;
-                        let addr = registers[dst].r64() as i64 + disp as i64;
-
-                        stack[addr as usize] = registers[src].r8();
-
-                        w!(d, "mov [{}{:+}], {}", dst, disp, src);
-
-                        ip += 3;
-                    }
-                    _ => todo!(),
-                }
-
-                rex_prefix = None;
-            }
-            0x89 => {
-                // mov r,r
-
-                let rex = rex_prefix.unwrap_or_default();
-                let modrm = ModRm(code[ip + 1]);
-
-                if is_16_bit {
+            let mod_ = modrm.mod_();
+            match mod_ {
+                0b01 => {
                     todo!()
-                } else if rex.w() {
-                    assert_eq!(modrm.mod_(), 0b11);
+                    // let disp = code[*ip + 2] as i8;
+                    // let imm = code[*ip + 3];
 
-                    let dst = R64::from_index(modrm.rm());
-                    let src = R64::from_index(modrm.reg());
+                    // w!(d, "sub {}, {}", dst, disp);
 
-                    w!(d, "mov {}, {}", dst, src);
-
-                    let value = registers[src].r64();
-                    registers[dst].set_r64(value);
-                } else {
-                    assert_eq!(modrm.mod_(), 0b11);
-
-                    let dst = R32::from_index(modrm.rm());
-                    let src = R32::from_index(modrm.reg());
-
-                    w!(d, "mov {}, {}", dst, src);
-
-                    let value = registers[src].r32();
-                    registers[dst].set_r32(value);
+                    // *ip += 4;
                 }
+                0b11 => {
+                    if rex.w() {
+                        let dst = R64::from_index(modrm.rm());
 
-                ip += 2;
+                        let imm = i32::from_le_bytes([
+                            code[*ip + 2],
+                            code[*ip + 3],
+                            code[*ip + 4],
+                            code[*ip + 5],
+                        ]);
 
-                is_16_bit = false;
-                rex_prefix = None;
-            }
-            0x8b => {
-                // mov
+                        let value = registers[dst].r64() as i64 - imm as i64;
 
-                let rex = rex_prefix.unwrap_or_default();
-                let modrm = ModRm(code[ip + 1]);
-
-                let mod_ = modrm.mod_();
-                match mod_ {
-                    0b01 => {
-                        if rex.w() {
-                            todo!()
+                        if is_cmp {
+                            w!(d, "cmp {}, {}", dst, imm);
                         } else {
-                            let disp = code[ip + 2] as i8;
+                            registers[dst].set_r64(value as u64);
 
-                            let src = R64::from_index(modrm.rm());
-                            let dst = R32::from_index(modrm.reg());
-                            let mem_src = registers[src].r64() as i64 + disp as i64;
-                            let mem_src = mem_src as usize;
-
-                            let mut data = [0; 4];
-                            data.copy_from_slice(&stack[mem_src..mem_src + 4]);
-                            let data = i32::from_le_bytes(data);
-                            registers[dst].set_r32(data as u32);
-
-                            w!(d, "mov {}, [{}{:+}]", dst, src, disp);
-
-                            ip += 1 + 1 + 1;
+                            w!(d, "sub {}, {}", dst, imm);
                         }
-                    }
-                    _ => todo!("{:?}", modrm),
-                }
 
-                rex_prefix = None;
-            }
-            0xb0..=0xb7 => {
-                // let rex = rex_prefix.unwrap_or_default();
+                        *ip += 1 + 1 + 4;
+                    } else {
+                        let dst = R32::from_index(modrm.rm());
 
-                let reg = R8::from_index(opcode - 0xb0);
-                let data = code[ip + 1];
+                        let imm = i32::from_le_bytes([
+                            code[*ip + 2],
+                            code[*ip + 3],
+                            code[*ip + 4],
+                            code[*ip + 5],
+                        ]);
 
-                registers[reg].set_r8(data);
+                        let value = registers[dst].r32() as i32 - imm;
 
-                w!(d, "mov {}, {}", reg, data);
-
-                ip += 2;
-                rex_prefix = None;
-            }
-            0xb8..=0xbf => {
-                // mov r, imm16/32/64
-
-                let rex = rex_prefix.unwrap_or_default();
-
-                if is_16_bit {
-                    assert!(code.len() >= ip + 2);
-
-                    let reg = R16::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
-
-                    let data = i16::from_le_bytes([code[ip + 1], code[ip + 2]]);
-
-                    registers[reg].set_r16(data as u16);
-
-                    w!(d, "mov {}, {:#x}", reg, data);
-
-                    ip += 1 + 2;
-                } else if rex.w() {
-                    assert!(code.len() >= ip + 8);
-
-                    let reg = R64::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
-
-                    let data = i64::from_le_bytes([
-                        code[ip + 1],
-                        code[ip + 2],
-                        code[ip + 3],
-                        code[ip + 4],
-                        code[ip + 5],
-                        code[ip + 6],
-                        code[ip + 7],
-                        code[ip + 8],
-                    ]);
-
-                    registers[reg].set_r64(data as u64);
-
-                    w!(d, "mov {}, {:#x}", reg, data);
-
-                    ip += 1 + 8;
-                } else {
-                    assert!(code.len() >= ip + 5);
-
-                    let reg = R32::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
-
-                    let data = i32::from_le_bytes([
-                        code[ip + 1],
-                        code[ip + 2],
-                        code[ip + 3],
-                        code[ip + 4],
-                    ]);
-
-                    registers[reg].set_r32(data as u32);
-
-                    w!(d, "mov {}, {:#x}", reg, data);
-
-                    ip += 1 + 4;
-                }
-
-                is_16_bit = false;
-                rex_prefix = None;
-            }
-            0xc3 => {
-                w!(d, "ret");
-                break;
-            }
-            0xc7 => {
-                // mov
-
-                let rex = rex_prefix.unwrap_or_default();
-                let modrm = ModRm(code[ip + 1]);
-
-                let mod_ = modrm.mod_();
-                match mod_ {
-                    0b01 => {
-                        if rex.w() {
-                            todo!()
+                        if is_cmp {
+                            w!(d, "cmp {}, {}", dst, imm);
                         } else {
-                            let disp = code[ip + 2] as i8;
-                            let data = i32::from_le_bytes([
-                                code[ip + 3],
-                                code[ip + 4],
-                                code[ip + 5],
-                                code[ip + 6],
-                            ]);
+                            registers[dst].set_r32(value as u32);
 
-                            let dst = R64::from_index(modrm.rm());
-                            let mem_dst = registers[dst].r64() as i64 + disp as i64;
-                            let mem_dst = mem_dst as usize;
-
-                            stack[mem_dst..mem_dst + 4].copy_from_slice(&data.to_le_bytes());
-
-                            w!(d, "mov dword [{}{:+}], {}", dst, disp, data);
-
-                            ip += 1 + 1 + 1 + 4;
+                            w!(d, "sub {}, {}", dst, imm);
                         }
+
+                        *ip += 1 + 1 + 4;
                     }
-                    0b11 => {
-                        if rex.w() {
-                            assert!(code.len() >= ip + 6);
-                            let data = [code[ip + 2], code[ip + 3], code[ip + 4], code[ip + 5]];
-                            let data = i32::from_le_bytes(data) as i64;
+                }
+                _ => todo!("{:?}", modrm),
+            }
 
-                            let dst = R64::from_index(modrm.reg());
-                            registers[dst].set_r64(data as u64);
+            *rex_prefix = None;
+        }
+        0x88 => {
+            // mov r/m8, r8
 
-                            ip += 6;
+            // let rex = rex_prefix.unwrap_or_default();
+            let modrm = ModRm(code[*ip + 1]);
 
-                            w!(d, "mov {}, {:#x}", dst, data);
-                        } else {
-                            todo!()
-                        }
+            let dst = R64::from_index(modrm.rm());
+            let src = R8::from_index(modrm.reg());
+
+            let mod_ = modrm.mod_();
+            match mod_ {
+                0x01 => {
+                    let disp = code[*ip + 2] as i8;
+                    let addr = registers[dst].r64() as i64 + disp as i64;
+
+                    stack[addr as usize] = registers[src].r8();
+
+                    w!(d, "mov [{}{:+}], {}", dst, disp, src);
+
+                    *ip += 3;
+                }
+                _ => todo!(),
+            }
+
+            *rex_prefix = None;
+        }
+        0x89 => {
+            // mov r,r
+
+            let rex = rex_prefix.unwrap_or_default();
+            let modrm = ModRm(code[*ip + 1]);
+
+            if *is_16_bit {
+                todo!()
+            } else if rex.w() {
+                assert_eq!(modrm.mod_(), 0b11);
+
+                let dst = R64::from_index(modrm.rm());
+                let src = R64::from_index(modrm.reg());
+
+                w!(d, "mov {}, {}", dst, src);
+
+                let value = registers[src].r64();
+                registers[dst].set_r64(value);
+            } else {
+                assert_eq!(modrm.mod_(), 0b11);
+
+                let dst = R32::from_index(modrm.rm());
+                let src = R32::from_index(modrm.reg());
+
+                w!(d, "mov {}, {}", dst, src);
+
+                let value = registers[src].r32();
+                registers[dst].set_r32(value);
+            }
+
+            *ip += 2;
+
+            *is_16_bit = false;
+            *rex_prefix = None;
+        }
+        0x8b => {
+            // mov
+
+            let rex = rex_prefix.unwrap_or_default();
+            let modrm = ModRm(code[*ip + 1]);
+
+            let mod_ = modrm.mod_();
+            match mod_ {
+                0b01 => {
+                    if rex.w() {
+                        todo!()
+                    } else {
+                        let disp = code[*ip + 2] as i8;
+
+                        let src = R64::from_index(modrm.rm());
+                        let dst = R32::from_index(modrm.reg());
+                        let mem_src = registers[src].r64() as i64 + disp as i64;
+                        let mem_src = mem_src as usize;
+
+                        let mut data = [0; 4];
+                        data.copy_from_slice(&stack[mem_src..mem_src + 4]);
+                        let data = i32::from_le_bytes(data);
+                        registers[dst].set_r32(data as u32);
+
+                        w!(d, "mov {}, [{}{:+}]", dst, src, disp);
+
+                        *ip += 1 + 1 + 1;
                     }
-                    _ => todo!("{:?}", modrm),
                 }
-
-                rex_prefix = None;
+                _ => todo!("{:?}", modrm),
             }
-            0xe9 => {
-                // jmp rel32
-                // E9 cd 	JMP rel32 	D 	Valid 	Valid 	Jump near, relative, RIP = RIP + 32-bit displacement sign extended to 64-bits.
 
-                let rel32 =
-                    i32::from_le_bytes([code[ip + 1], code[ip + 2], code[ip + 3], code[ip + 4]]);
+            *rex_prefix = None;
+        }
+        0xb0..=0xb7 => {
+            // let rex = rex_prefix.unwrap_or_default();
 
-                w!(d, "jmp near {}", rel32 + 4);
+            let reg = R8::from_index(opcode - 0xb0);
+            let data = code[*ip + 1];
 
-                ip += rel32 as i64 as usize;
+            registers[reg].set_r8(data);
+
+            w!(d, "mov {}, {}", reg, data);
+
+            *ip += 2;
+            *rex_prefix = None;
+        }
+        0xb8..=0xbf => {
+            // mov r, imm16/32/64
+
+            let rex = rex_prefix.unwrap_or_default();
+
+            if *is_16_bit {
+                assert!(code.len() >= *ip + 2);
+
+                let reg = R16::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
+
+                let data = i16::from_le_bytes([code[*ip + 1], code[*ip + 2]]);
+
+                registers[reg].set_r16(data as u16);
+
+                w!(d, "mov {}, {:#x}", reg, data);
+
+                *ip += 1 + 2;
+            } else if rex.w() {
+                assert!(code.len() >= *ip + 8);
+
+                let reg = R64::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
+
+                let data = i64::from_le_bytes([
+                    code[*ip + 1],
+                    code[*ip + 2],
+                    code[*ip + 3],
+                    code[*ip + 4],
+                    code[*ip + 5],
+                    code[*ip + 6],
+                    code[*ip + 7],
+                    code[*ip + 8],
+                ]);
+
+                registers[reg].set_r64(data as u64);
+
+                w!(d, "mov {}, {:#x}", reg, data);
+
+                *ip += 1 + 8;
+            } else {
+                assert!(code.len() >= *ip + 5);
+
+                let reg = R32::from_index(opcode - 0xb8 + 8 * rex.b() as u8);
+
+                let data = i32::from_le_bytes([
+                    code[*ip + 1],
+                    code[*ip + 2],
+                    code[*ip + 3],
+                    code[*ip + 4],
+                ]);
+
+                registers[reg].set_r32(data as u32);
+
+                w!(d, "mov {}, {:#x}", reg, data);
+
+                *ip += 1 + 4;
             }
-            0xf3 => {
-                if code[ip + 1..].starts_with(&[0x0f, 0x1e, 0xfa]) {
-                    // endbr64
-                    w!(d, "endbr64");
-                    ip += 4;
-                } else {
-                    todo!();
+
+            *is_16_bit = false;
+            *rex_prefix = None;
+        }
+        0xc3 => {
+            w!(d, "ret");
+            // break;
+        }
+        0xc7 => {
+            // mov
+
+            let rex = rex_prefix.unwrap_or_default();
+            let modrm = ModRm(code[*ip + 1]);
+
+            let mod_ = modrm.mod_();
+            match mod_ {
+                0b01 => {
+                    if rex.w() {
+                        todo!()
+                    } else {
+                        let disp = code[*ip + 2] as i8;
+                        let data = i32::from_le_bytes([
+                            code[*ip + 3],
+                            code[*ip + 4],
+                            code[*ip + 5],
+                            code[*ip + 6],
+                        ]);
+
+                        let dst = R64::from_index(modrm.rm());
+                        let mem_dst = registers[dst].r64() as i64 + disp as i64;
+                        let mem_dst = mem_dst as usize;
+
+                        stack[mem_dst..mem_dst + 4].copy_from_slice(&data.to_le_bytes());
+
+                        w!(d, "mov dword [{}{:+}], {}", dst, disp, data);
+
+                        *ip += 1 + 1 + 1 + 4;
+                    }
                 }
-            }
-            0xf4 => {
-                // hlt, we use it for testing as it can never appear in userspace code
-                break;
-            }
-            _ => {
-                if opcode & 0b0100 << 4 != 0 {
-                    rex_prefix = Some(Rex(opcode));
-                    // dbg!(rex_prefix);
-                    ip += 1;
-                } else {
-                    todo!("opcode={:#x}\n+++++++++++++++++++++++++++++++++++\n{}+++++++++++++++++++++++++++++++++++", opcode, d);
+                0b11 => {
+                    if rex.w() {
+                        assert!(code.len() >= *ip + 6);
+                        let data = [code[*ip + 2], code[*ip + 3], code[*ip + 4], code[*ip + 5]];
+                        let data = i32::from_le_bytes(data) as i64;
+
+                        let dst = R64::from_index(modrm.reg());
+                        registers[dst].set_r64(data as u64);
+
+                        *ip += 6;
+
+                        w!(d, "mov {}, {:#x}", dst, data);
+                    } else {
+                        todo!()
+                    }
                 }
+                _ => todo!("{:?}", modrm),
+            }
+
+            *rex_prefix = None;
+        }
+        0xe9 => {
+            // jmp rel32
+            // E9 cd 	JMP rel32 	D 	Valid 	Valid 	Jump near, relative, Rip = Rip + 32-bit displacement sign extended to 64-bits.
+
+            let rel32 =
+                i32::from_le_bytes([code[*ip + 1], code[*ip + 2], code[*ip + 3], code[*ip + 4]]);
+
+            w!(d, "jmp near {}", rel32 + 4);
+
+            *ip += rel32 as i64 as usize;
+        }
+        0xf3 => {
+            if code[*ip + 1..].starts_with(&[0x0f, 0x1e, 0xfa]) {
+                // endbr64
+                w!(d, "endbr64");
+                *ip += 4;
+            } else {
+                todo!();
+            }
+        }
+        0xf4 => {
+            // hlt, we use it for testing as it can never appear in userspace code
+            // break;
+        }
+        _ => {
+            if opcode & 0b0100 << 4 != 0 {
+                *rex_prefix = Some(Rex(opcode));
+                // dbg!(rex_prefix);
+                *ip += 1;
+
+                run(emulator, d)
+            } else {
+                todo!("opcode={:#x}\n+++++++++++++++++++++++++++++++++++\n{}+++++++++++++++++++++++++++++++++++", opcode, d);
             }
         }
     }
-
-    registers
 }
 
 fn main() -> Result<()> {

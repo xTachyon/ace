@@ -1,6 +1,7 @@
 use crate::gdb::RegisterNames;
 use crate::gdb::{Debuggable, Message, GDB};
-use crate::registers::R64;
+use crate::registers::{Register, R64};
+use crate::{Emulator, Nothing};
 use anyhow::anyhow;
 use anyhow::Result;
 use std::{
@@ -52,7 +53,7 @@ fn map_registers(mapping: &[R64; 16], regs: Vec<(u8, u64)>) -> [u64; 16] {
     result
 }
 
-fn run_one(path: &str, s: &str, tmp: &mut Vec<u8>) -> Result<()> {
+fn run_one(s: &str, tmp: &mut Vec<u8>) -> Result<()> {
     const TO_FIND: &str =
         "-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-";
     const ASM_FILE_PATH: &str = "tmp/now.s";
@@ -104,18 +105,53 @@ fn run_one(path: &str, s: &str, tmp: &mut Vec<u8>) -> Result<()> {
 
     gdb.run();
 
-    loop {
+    let Some(hlt_line) = asm.lines().position(|x| x.contains("hlt")) else {
+        panic!("hlt instruction not found");
+    };
+    let hlt_line = hlt_line as u32 + 1;
+
+    let mut emulator = Emulator::new(tmp);
+
+    let mut first = true;
+    'end: loop {
         while let Some(message) = gdb.recv() {
-            if let Message::BreakpointHit | Message::EndSteppingRange = message {
+            if let Message::BreakpointHit { line } | Message::EndSteppingRange { line } = message {
+                if line == hlt_line {
+                    break 'end;
+                }
                 break;
             }
         }
+
         let registers = gdb.registers();
         let registers = map_registers(&register_table, registers);
+
         gdb.step();
+
+        if first {
+            first = false;
+            continue;
+        }
+
+        emulator.run(&mut Nothing);
+
+        for i in 0..16 {
+            if i == 4 || i == 5 {
+                continue;
+            }
+            let hw_value = registers[i];
+            let soft_value = emulator.regs.general[i].r64();
+
+            assert_eq!(
+                hw_value,
+                soft_value,
+                "at {}({})",
+                R64::from_index(i as u8),
+                i
+            );
+        }
     }
 
-    todo!();
     Ok(())
 }
 
@@ -141,7 +177,7 @@ pub fn run_impl() -> Result<()> {
         tmp.clear();
         buffer.clear();
         file.read_to_string(&mut buffer)?;
-        run_one(path, &buffer, &mut tmp)?;
+        run_one(&buffer, &mut tmp)?;
     }
 
     Ok(())

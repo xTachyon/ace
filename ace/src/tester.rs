@@ -193,18 +193,19 @@ ret",
     executable_memory[0..tmp.len()].copy_from_slice(tmp);
     executable_memory[tmp.len()..].fill(0xcc);
 
-    let soft = super::run(executable_memory, &mut Nothing);
-    let regs: HwRegs = unsafe { run_test(&executable_memory) };
+    todo!()
+    // let soft = super::run(executable_memory, &mut Nothing);
+    // let regs: HwRegs = unsafe { run_test(&executable_memory) };
 
-    // ignore r15 for now
-    for i in 0..15 {
-        if i == R64::RSP as usize || i == R64::RBP as usize {
-            continue;
-        }
-        assert_eq!(regs.regs[i], soft.general[i].r64(), "at {}", i);
-    }
+    // // ignore r15 for now
+    // for i in 0..15 {
+    //     if i == R64::RSP as usize || i == R64::RBP as usize {
+    //         continue;
+    //     }
+    //     assert_eq!(regs.regs[i], soft.general[i].r64(), "at {}", i);
+    // }
 
-    Ok(())
+    // Ok(())
 }
 
 pub fn run() -> Result<()> {

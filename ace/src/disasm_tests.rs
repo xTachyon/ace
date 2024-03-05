@@ -32,26 +32,27 @@ fn t(text: &str) -> Registers {
     let bin_correct = fs::read(BIN_FILE_PATH).unwrap();
     let mut output = String::new();
 
-    let r = super::run(&bin_correct, &mut output);
+    todo!();
+    // let r = super::run(&bin_correct, &mut output);
 
-    fs::write(ASM_FILE_PATH, &output).unwrap();
+    // fs::write(ASM_FILE_PATH, &output).unwrap();
 
-    Command::new("nasm")
-        .args([ASM_FILE_PATH, "-felf64", "-O0"])
-        .status()
-        .unwrap();
+    // Command::new("nasm")
+    //     .args([ASM_FILE_PATH, "-felf64", "-O0"])
+    //     .status()
+    //     .unwrap();
 
-    Command::new("objcopy")
-        .args(["-O", "binary", "-j", ".text", "tmp/now.o", BIN_FILE_PATH])
-        .status()
-        .unwrap();
+    // Command::new("objcopy")
+    //     .args(["-O", "binary", "-j", ".text", "tmp/now.o", BIN_FILE_PATH])
+    //     .status()
+    //     .unwrap();
 
-    let bin_new = fs::read(BIN_FILE_PATH).unwrap();
+    // let bin_new = fs::read(BIN_FILE_PATH).unwrap();
 
-    let bin_correct = &bin_correct[..bin_correct.len() - 1];
-    assert_eq!(bin_correct, bin_new, "\n{}", output);
+    // let bin_correct = &bin_correct[..bin_correct.len() - 1];
+    // assert_eq!(bin_correct, bin_new, "\n{}", output);
 
-    r
+    // r
 }
 
 #[test]

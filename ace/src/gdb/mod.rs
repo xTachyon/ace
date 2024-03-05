@@ -6,7 +6,11 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
     process::{ChildStdin, ChildStdout, Command, Stdio},
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
 };
 
 fn reader_thread(reader: ChildStdout, sender: Sender<String>) {
@@ -17,7 +21,10 @@ fn reader_thread(reader: ChildStdout, sender: Sender<String>) {
         s.clear();
         reader.read_line(&mut s).unwrap();
 
-        sender.send(s.trim().to_string()).unwrap();
+        if let Err(_) = sender.send(s.trim().to_string()) {
+            // debugging done
+            return;
+        }
     }
 }
 
@@ -133,11 +140,12 @@ impl GDB {
                 let value = gdbson::parse(rest);
                 let value = value.as_map();
                 let reason: &str = (&value["reason"]).try_into().unwrap();
+                let line: u32 = (&value["frame"].as_map()["line"]).try_into().unwrap();
 
                 match reason {
-                    "breakpoint-hit" => Message::BreakpointHit,
-                    "end-stepping-range" => Message::EndSteppingRange,
-                    _ => todo!(),
+                    "breakpoint-hit" => Message::BreakpointHit { line },
+                    "end-stepping-range" => Message::EndSteppingRange { line },
+                    _ => todo!("{}", reason),
                 }
             }
             _ => todo!(),
@@ -226,7 +234,9 @@ impl GDB {
                 b'~' => {
                     assert!(matches!(line.as_bytes(), [b'\"', .., b'\"']), "{}", line);
                     let line = &line[1..line.len() - 1];
-                    print!("{}", unescape_c(line));
+                    if false {
+                        print!("{}", unescape_c(line));
+                    }
                 }
                 b'&' => {
                     self.write_log("log", format_args!("{}", unescape_c(line)));
@@ -290,8 +300,8 @@ fn split_comma(line: &str) -> (&str, &str) {
 #[derive(Debug)]
 pub enum Message {
     BreakpointCreated,
-    BreakpointHit,
-    EndSteppingRange,
+    BreakpointHit { line: u32 },
+    EndSteppingRange { line: u32 },
     RegisterNames(Vec<String>),
     RegisterValues(Vec<(u8, u64)>),
     Other,
