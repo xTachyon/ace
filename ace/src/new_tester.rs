@@ -110,7 +110,8 @@ fn run_one(s: &str, tmp: &mut Vec<u8>) -> Result<()> {
     };
     let hlt_line = hlt_line as u32 + 1;
 
-    let mut emulator = Emulator::new(tmp);
+    let mut d = Nothing;
+    let mut emulator = Emulator::new(tmp, &mut d);
 
     let mut first = true;
     'end: loop {
@@ -133,7 +134,7 @@ fn run_one(s: &str, tmp: &mut Vec<u8>) -> Result<()> {
             continue;
         }
 
-        emulator.run(&mut Nothing);
+        emulator.run();
 
         for i in 0..16 {
             if i == 4 || i == 5 {

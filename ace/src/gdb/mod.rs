@@ -6,11 +6,7 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
     process::{ChildStdin, ChildStdout, Command, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::{channel, Receiver, Sender},
-        Arc,
-    },
+    sync::mpsc::{channel, Receiver, Sender},
 };
 
 fn reader_thread(reader: ChildStdout, sender: Sender<String>) {

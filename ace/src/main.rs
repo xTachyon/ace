@@ -3,7 +3,6 @@ mod disasm_tests;
 mod gdb;
 mod new_tester;
 mod registers;
-mod tester;
 
 use anyhow::Result;
 use std::fmt::Debug;
@@ -116,12 +115,12 @@ trait DisasmWriter: Display {
 }
 
 struct Nothing;
-impl Display for Nothing {
+impl Display for &mut Nothing {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Nothing")
     }
 }
-impl DisasmWriter for Nothing {
+impl DisasmWriter for &mut Nothing {
     fn write(&mut self, _args: std::fmt::Arguments<'_>) {}
 }
 
@@ -193,16 +192,18 @@ impl<T: Register> std::ops::IndexMut<T> for Registers {
     }
 }
 
-struct Emulator<'x> {
+struct Emulator<'x, D: DisasmWriter> {
     regs: Registers,
     stack: [u8; 1024 * 1024],
     ip: usize,
     code: &'x [u8],
     rex_prefix: Option<Rex>,
     is_16_bit: bool,
+    running: bool,
+    d: D,
 }
-impl<'x> Emulator<'x> {
-    fn new(code: &[u8]) -> Emulator {
+impl<'x, D: DisasmWriter> Emulator<'x, D> {
+    fn new<'a>(code: &'a [u8], d: D) -> Emulator<'a, D> {
         Emulator {
             regs: Registers::default(),
             stack: [0; 1024 * 1024],
@@ -210,18 +211,28 @@ impl<'x> Emulator<'x> {
             code,
             rex_prefix: None,
             is_16_bit: false,
+            running: true,
+            d,
         }
     }
 
-    fn run<D: DisasmWriter>(&mut self, d: &mut D) {
-        crate::run(self, d)
+    fn run(&mut self) {
+        crate::run(self)
+    }
+    #[cfg(test)]
+    fn run_to_end(&mut self) -> Registers {
+        while self.running {
+            self.run();
+        }
+        std::mem::replace(&mut self.regs, Registers::default())
     }
 }
 
-fn run<D: DisasmWriter>(emulator: &mut Emulator, d: &mut D) {
+fn run<D: DisasmWriter>(emulator: &mut Emulator<D>) {
     let ip = &mut emulator.ip;
     let registers = &mut emulator.regs;
     let stack = &mut emulator.stack;
+    let d = &mut emulator.d;
 
     registers[RBP].set_r64(stack.len() as u64);
     registers[RSP].set_r64(stack.len() as u64);
@@ -290,7 +301,7 @@ fn run<D: DisasmWriter>(emulator: &mut Emulator, d: &mut D) {
             *is_16_bit = true;
             *ip += 1;
 
-            run(emulator, d)
+            run(emulator)
         }
         0x74 => {
             // je/jz rel8
@@ -644,7 +655,7 @@ fn run<D: DisasmWriter>(emulator: &mut Emulator, d: &mut D) {
         }
         0xf4 => {
             // hlt, we use it for testing as it can never appear in userspace code
-            // break;
+            emulator.running = false;
         }
         _ => {
             if opcode & 0b0100 << 4 != 0 {
@@ -652,7 +663,7 @@ fn run<D: DisasmWriter>(emulator: &mut Emulator, d: &mut D) {
                 // dbg!(rex_prefix);
                 *ip += 1;
 
-                run(emulator, d)
+                run(emulator)
             } else {
                 todo!("opcode={:#x}\n+++++++++++++++++++++++++++++++++++\n{}+++++++++++++++++++++++++++++++++++", opcode, d);
             }
@@ -661,13 +672,6 @@ fn run<D: DisasmWriter>(emulator: &mut Emulator, d: &mut D) {
 }
 
 fn main() -> Result<()> {
-    // let data = fs::read("binfile")?;
-    // run(&data);
-
-    if false {
-        tester::run()?;
-    }
-
     new_tester::run();
 
     Ok(())
